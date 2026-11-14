@@ -1,0 +1,795 @@
+# brainos 海马体检索 HippocampalRecall — brainos 自有记忆检索路线 v2.0
+# ═══════════════════════════════════════════════════════════════
+# AML Cycle 2 合规契约(官方规则 agentmemoryleaderboard.ai/competition, 2026-10-03核对):
+#   ①Search只返回记录/证据, 禁止生成最终答案(答案在平台侧)
+#   ②禁止硬编码公开题目/禁止跨样本共享状态——reinforce()评测期间禁调, 仅离线生命周期用
+#   ③embedding可插拔: Academic榜须text-embedding-v4, Industry榜可开源权重(默认MiniLM)
+#   ④版本可溯: 本文件随brainos仓库固定commit提交
+# 定位(指挥官令2026-10-03): brainos=探索版/开源版, 技术路线与商业版(zfaios)错开。
+#   商业版路线: Rust·原子四卡·SPO三元组·token字典压缩·通用网关
+#   brainos路线(本器官): 心理学机制驱动——
+#     ①FSRS可检索性衰减 → 时序先验(最近的记忆天然更"鲜活", 治最新值裁决)
+#     ②赫布共激活(XMemory.get_related) → 关联轮扩展(治代词断链)
+#     ③九层记忆层路由 → 对话原文入EPISODIC层
+#     ④三通道融合(词BM25+字符3gram+语义) → 用别人的轮子, 走自己的路
+# v2.0 噪声语料提取竞争四重门控(全部通用语料统计启发, 零题目先验, 详见recall_salience):
+#     ⑤显著度门控   低信息寒暄轮在融合分上降权(信息密度=内容词IDF/实体数/句长)
+#     ⑥Dream去重    ingest期HippocampalDreamEngine证据卡清洗(重复卡检索降权)
+#     ⑦语义门控     候选集内相对语义阈(非绝对值), 低MiniLM相似度候选降权
+#     ⑧说话人绑定   题面人名→会话说话人实体索引加成+窗口配额(治属性张冠李戴)
+# v2.6 时态知识图谱接线(B-0兵TG·R7): 休眠件temporal_graph_v2上岗=时态事实记忆能力——
+#     ⑨ingest尾纯正则三元组抽取(中英双语·≤3条/卡·零LLM·批量事务收口)入TKG ⑩search尾时态
+#     信号查询→active事实最新值补充证据卡入窗(kind=tkg)·三重fail-soft降级(治最新值超时序)
+# v2.7 双刀接线(B-0兵DP1·R1·C20拆件: 纯文本工具层迁出recall_nlp零砍功能)——
+#     ⑪R1日期锚: 相对时间→绝对日期"[= 1 May 2022]"追卡文尾(治F2日期簇: 题问绝对日期
+#       而金卡只有相对时间→词面必然失配; 三通道索引+检索窗词面均可见)
+#     ⑫PR代词解引: query含she/he/his/her/they→该会话说话人名追加进查询(治C族:
+#       题问人名相关但金卡第一人称说话的词面失配; 只扩查询不改卡)
+# ═══════════════════════════════════════════════════════════════
+from __future__ import annotations
+
+import os
+import re
+import time
+import math
+from pathlib import Path
+from typing import Any
+
+from rank_bm25 import BM25Okapi
+import numpy as np
+
+from brainos.memory.xmemory import XMemory, MemoryLayer
+from brainos.memory.fsrs_engine import FSRSEngine, FSRSRating
+from brainos.memory.recall_nlp import (
+    _char3gram,
+    _fenv,
+    _parse_dt,
+    _tokenize,
+    date_anchor,
+    pronoun_expand,
+)
+from brainos.memory.recall_salience import (
+    ConvSalience,
+    extract_query_speakers,
+    find_duplicates,
+    name_in_text,
+)
+from brainos.memory.hippocampal_dream import HippocampalDreamEngine, MemoryItem
+
+HF_MIRROR = "https://hf-mirror.com"
+EMB_CACHE = Path(os.environ.get("BRAINOS_EMB_CACHE", str(Path.home() / "exam/emb_cache.npz")))
+EMB_MODEL = os.environ.get("BRAINOS_EMBED_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+# Academic榜换官方钦定: BRAINOS_EMBED_MODEL=text-embedding-v4(经API) — 通道可插拔
+
+# ─────────────── v2.6 时态知识图谱接线(B-0兵TG·R7·休眠件temporal_graph_v2上岗) ───────────────
+# ingest尾纯正则"主-属性-值"三元组抽取("X is/works as/has Y"式·中英双语·≤3条/卡·抽不出跳过
+#   ·禁LLM零题目先验)入TKG; search尾: 查询含时态信号→TKG该主体active事实→最新值事实作
+#   补充证据卡入窗(kind=tkg)。三重fail-soft: 初始化失败/抽取零命中/查询异常→静默降级纯检索。
+_TKG_OBJ_STOP = "gonna going just still really so very not no also too always never trying excited sorry happy glad sure okay fine here there awesome great good tough hard bumpy determined now currently lately today".split()
+_TKG_SUBJ_STOP = "what that this it he she they you we who which there one everyone nobody anybody anyone".split(); _TKG_W0_STOP = "to been being for with that because at on of about".split()
+_TKG_OBJ_PRON = "my our mine ours myself yourself you yours".split()
+_TKG_CLAUSE = r"(?=\s*[.,;!?\n]|\s+(?:and|but|so|because|when|while|since|after|before|though|which|who|that)\b|$)"
+_TKG_SUB_EN = r"([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)"; _TKG_OBJ_EN = r"((?:an?|the|my|our|your|his|her|their|two|three|four)?\s*[A-Za-z][A-Za-z \-]{2,44}?)"
+_TKG_CN_SUB = r"([\u4e00-\u9fff]{1,6}?|我)"; _TKG_CN_TEM = r"(?:现在|目前|如今)?"
+_TKG_PATS = [
+    ("is",     re.compile(r"\b" + _TKG_SUB_EN + r"\s+(?:is|was)\s+" + _TKG_OBJ_EN + _TKG_CLAUSE, re.M)),
+    ("is",     re.compile(r"\b(I)(?:'m| am| was)\s+" + _TKG_OBJ_EN + _TKG_CLAUSE)),
+    ("works",  re.compile(r"\b" + _TKG_SUB_EN + r"\s+works?\s+(?:as|at|for|on)\s+" + _TKG_OBJ_EN + _TKG_CLAUSE)),
+    ("works",  re.compile(r"\b(I)\s+(?:work|worked)\s+(?:as|at|for|on)\s+" + _TKG_OBJ_EN + _TKG_CLAUSE)),
+    ("has",    re.compile(r"\b" + _TKG_SUB_EN + r"\s+has\s+" + _TKG_OBJ_EN + _TKG_CLAUSE)),
+    ("has",    re.compile(r"\b(I)\s+(?:have|had)\s+" + _TKG_OBJ_EN + _TKG_CLAUSE)),
+    ("is",     re.compile(_TKG_CN_SUB + _TKG_CN_TEM + r"是([^，。！？；\n]{2,24}?)(?=[，。！？；\n]|而且|但是|因为|所以|然后|$)")),
+    ("has",    re.compile(_TKG_CN_SUB + _TKG_CN_TEM + r"有([^，。！？；\n]{2,24}?)(?=[，。！？；\n]|而且|但是|因为|所以|然后|$)")),
+    ("works",  re.compile(_TKG_CN_SUB + _TKG_CN_TEM + r"在([^，。！？；\n]{1,20}?)(?:工作|任职|上班)")),
+]
+
+def _tkg_clean_obj(s: str) -> str:
+    s = re.sub(r"\s+", " ", re.sub(r"^(?:an?|the|my|our|your|his|her|their|some|really|just|still)\s+",
+               "", (s or "").strip(), flags=re.I)).strip(" .,;:!?-—'\"")
+    low = s.lower()
+    if any(low == st or low.startswith(st + " ") for st in _TKG_OBJ_STOP):
+        return ""  # 噪声前缀(寒暄/副词开头非事实值)→弃
+    if low.endswith((" now", " lately", " today", " anymore")):
+        s = s.rsplit(" ", 1)[0].strip()
+    return s if 2 < len(s) <= 60 else ""
+def _tkg_extract(text: str, speaker: str) -> list[tuple[str, str, str]]:
+    """纯正则三元组抽取: (主语,谓语,值)·每卡≤3·零LLM·抽不出跳过"""
+    out: list[tuple[str, str, str]] = []
+    try:
+        for pred, pat in _TKG_PATS:
+            for m in pat.finditer(text or ""):
+                sub = (m.group(1) or "").strip()
+                obj = _tkg_clean_obj(m.group(2) or "")
+                if sub.lower() in ("i", "me", "my", "我"):
+                    sub = (speaker or "").strip()
+                ws = obj.lower().split()
+                if (not obj or not sub or len(sub) > 40 or sub.lower() in _TKG_SUBJ_STOP
+                        or (ws and ((ws[0].endswith(("ing", "ed"))
+                                     and ws[0] not in ("based", "located"))
+                                    or ws[0] in _TKG_W0_STOP))
+                        or (sub.lower() != (speaker or "").strip().lower()
+                            and any(t in _TKG_OBJ_PRON for t in ws))):
+                    continue  # 代词主语/动词性值开头/他主体带一二人物代词→噪声弃
+                if any(a.lower() == sub.lower() and b == pred for a, b, _ in out):
+                    continue  # 同卡同(主,谓)只留首条
+                out.append((sub, pred, obj))
+                if len(out) >= 3:
+                    return out
+    except Exception:
+        return out  # fail-soft: 抽取异常按零命中处理
+    return out
+
+
+_TKG_QUERY_SIG = re.compile(r"\b(?:current(?:ly)?|these\s+days|now|nowadays|lately|at\s+present|today|still)\b|现在|目前|如今|当前|最近|近来", re.I)
+
+
+def _tkg_subj_in_query(subj: str, query: str) -> bool:
+    if re.fullmatch(r"[\u4e00-\u9fff]+", subj):
+        return subj in query
+    return re.search(r"(?<![A-Za-z0-9])" + re.escape(subj) + r"(?![A-Za-z0-9])", query, re.I) is not None
+
+
+class HippocampalRecall:
+    """brainos 检索器官: Add=ingest_cards / Search=search
+
+    v2.0 门控参数全部环境变量门控, 默认即最优配置:
+      BRAINOS_SAL_FLOOR   显著度门控下限(0..1, 分数乘子下限)      默认0.35 (1=关)
+      BRAINOS_DUP_PEN     重复卡乘子                              默认0.55 (1=关)
+      BRAINOS_SEM_MARGIN  语义门控相对阈(距候选集最高sim的余量)    默认0.12 (0=关)
+      BRAINOS_SEM_PEN     语义低相似乘子                          默认0.60 (1=关)
+      BRAINOS_SPK_BOOST   题面说话人卡的加成乘子                  默认1.30 (1=关)
+      BRAINOS_SPK_MENTION 说话人名在卡文本出现的加成乘子          默认1.10 (1=关)
+      BRAINOS_SPK_QUOTA   说话人卡在证据窗的配额比例(0..1)        默认0.65 (0=关)
+      BRAINOS_HEBB_RATIO  赫布扩展锚点相对分阈值(0=全部扩展)      默认0.55
+      BRAINOS_WIN_CAP     证据窗封顶(×topk)                       默认2.0
+      BRAINOS_DREAM       ingest期dream清洗开关(1=开)             默认1
+      BRAINOS_TKG(=0关门)/BRAINOS_TKG_MAX/BRAINOS_TKG_DB 时态知识图谱接线(默认开·补充卡上限2·db路径)
+      BRAINOS_CONV_STRICT(=0关门)       conv_scope不在索引→返回空禁全库回退  默认开(租户安全)
+      BRAINOS_SMALL_CONV_GUARD(=0关门)  <3卡会话词面兜底通道(治小语料负idf检索恒空) 默认开
+      BRAINOS_CHOSENIMMUNE(=0关门)      窗尾chosen席锁定·邻居只竞cap余席(OG1双预算) 默认开
+      BRAINOS_SEMGATE_SCOPE             语义门作用域: total=乘卡总分(生产现状·缺省)/
+                                        component=仅乘sem分量·w/c3免税(F1c·双臂候裁)
+    """
+
+    def __init__(self, use_embed: bool = True, fsrs_prior_weight: float = 0.25):
+        self.fsrs = FSRSEngine()
+        self.xm = XMemory()
+        self.use_embed = use_embed
+        self.w_fsrs = _fenv("BRAINOS_FSRS_W", fsrs_prior_weight)
+        self.fsrs_band = _fenv("BRAINOS_FSRS_BAND", 0.97)
+        self._cards: dict[str, dict[str, Any]] = {}   # key → card meta
+        self._idx: dict[str, dict[str, Any]] = {}     # conv → {cards, w, c}
+        self._emb: dict[str, np.ndarray] | None = None
+        self._qmodel = None
+        # v2.0 门控参数(环境变量门控, 默认最优)
+        self.sal_floor = _fenv("BRAINOS_SAL_FLOOR", 0.35)
+        self.dup_pen = _fenv("BRAINOS_DUP_PEN", 0.55)
+        self.sem_margin = _fenv("BRAINOS_SEM_MARGIN", 0.12)
+        self.sem_pen = _fenv("BRAINOS_SEM_PEN", 0.60)
+        self.spk_boost = _fenv("BRAINOS_SPK_BOOST", 1.30)
+        self.spk_mention = _fenv("BRAINOS_SPK_MENTION", 1.10)
+        self.spk_quota = _fenv("BRAINOS_SPK_QUOTA", 0.65)
+        self.hebb_ratio = _fenv("BRAINOS_HEBB_RATIO", 0.55)
+        self.win_cap = _fenv("BRAINOS_WIN_CAP", 2.0)
+        self.dream_on = _fenv("BRAINOS_DREAM", 1) >= 1
+        self._spk_idx: dict[str, dict[str, set[str]]] = {}  # conv → 说话人小写 → keys
+        self.dream_stats: dict[str, Any] = {}
+        # v2.4 增量Add: 脏会话/脏卡集合(ingest_cards登记, finalize_ingest清空)——
+        # 客户边聊边存时finalize只重建脏会话索引, 不再全量遍历
+        # (10会话5882卡全量finalize~25s, 持续对话不可接受——指挥官令2026-10-03)
+        self._dirty_convs: set[str] = set()
+        self._dirty_keys: set[str] = set()
+        # v2.5 规模自适应ANN(B-0兵LB): 卡数>阈值建lancedb ANN索引, 以下暴力点积
+        # (小语料精确优先·零行为变化); BRAINOS_LANCEDB=0 关门回暴力逐位兼容
+        self._ann: Any = None
+        self._ann_threshold = int(_fenv("BRAINOS_ANN_THRESHOLD", 3000))
+        self._ann_on = os.environ.get("BRAINOS_LANCEDB", "1") != "0"
+        # v2.6 时态知识图谱接线: BRAINOS_TKG=0 关门(缺省开·三重fail-soft静默降级)
+        self.tkg_on = os.environ.get("BRAINOS_TKG", "1") != "0"
+        self.tkg_max = int(_fenv("BRAINOS_TKG_MAX", 2))
+        self._tkg_inst: Any = "unset" if self.tkg_on else None  # None=关门/初始化失败→降级
+        self.tkg_stats: dict[str, Any] = {}
+        # v2.8 租户加固(MT2·客户级安全): ①小会话检索盲区兜底 ②conv作用域严格化——
+        # 两门均缺省开(客户安全语义), =0 关门回v2.7旧行为(逐位兼容)
+        self.conv_strict = os.environ.get("BRAINOS_CONV_STRICT", "1") != "0"
+        self.small_guard_on = os.environ.get("BRAINOS_SMALL_CONV_GUARD", "1") != "0"
+        self.small_guard_max = int(_fenv("BRAINOS_SMALL_CONV_MAX", 2))
+        self.leak_blocked = 0  # 跨conv赫布扩展被clamp计数(可观测·不raise保fail-soft)
+        # v2.9① 窗尾chosen保护(B-0-B席OG1重建2026-10-06·施工图=~/exam/pipeline/SPEC_og1.md):
+        #   病灶=赫布邻居0.9×锚分追加→全体按分截cap→chosen(16席组窗)不被保护被挤
+        #   (q65双金卡距棒0.025/0.078·q48_19 D1:8差0.127·q49 3卡·q43 6卡)。
+        #   修法=双预算制: chosen席锁定, 邻居只竞cap-len(chosen)余席。
+        #   BRAINOS_CHOSENIMMUNE=0 关门(逐位兼容)。last_chosen组窗快照(可观测零行为)。
+        self.chosen_immune = os.environ.get("BRAINOS_CHOSENIMMUNE", "1") != "0"
+        self.last_chosen: list[str] = []
+        # v2.9② 融合层语义门域修正(B-0-B席F1c重建2026-10-06·施工图=~/exam/pipeline/SPEC_f1c.md):
+        #   病灶=语义相对阈门(×sem_pen)乘在卡总分→单通道孤证卡结构性压死(q40实证0.817<门槛)。
+        #   BRAINOS_SEMGATE_SCOPE: "total"=生产逐位现状(缺省); "component"=池化按通道记分量,
+        #   语义门只乘sem分量(w/c3分量免税); sem-only卡税后分与total臂全等(不放开sem狗·q7反事实29→54教训)。
+        self.semgate_scope = os.environ.get("BRAINOS_SEMGATE_SCOPE", "total").strip().lower()
+        self.last_poolc: dict[str, dict[str, float]] | None = None   # F1c可观测(缺省臂恒None)
+        self.last_scored: dict[str, float] | None = None             # F1c可观测(缺省臂恒None)
+        self.last_sims: dict[str, float] | None = None               # F1c可观测(缺省臂恒None)
+        self.last_spk_names: set[str] = set()                        # 说话人绑定可观测(每次search覆写)
+
+    @property
+    def emb(self) -> dict[str, "np.ndarray"] | None:
+        """公有别名: 语义向量库"""
+        return self._emb
+
+    @property
+    def idx(self) -> dict[str, dict[str, Any]]:
+        """公有别名: 与harness的HybridIndex.idx同形(conv→通道索引)"""
+        return self._idx
+
+    # ─────────────── Add 相 ───────────────
+    def ingest_cards(self, cards: list[dict[str, Any]]) -> int:
+        """cards: [{conv, sess, dia, speaker, text, dt}] — 对话原文入FSRS+XMemory(EPISODIC)"""
+        by_conv: dict[str, list[dict]] = {}
+        for x in cards:
+            if not x.get("text"):
+                continue
+            # EG审计#3: conv/sess/dt缺失→跳过该卡并计数(裸下标KeyError曾炸ingest主路径)
+            if not x.get("conv") or not x.get("sess") or not x.get("dt"):
+                self.dream_stats["ingest_skipped_missing_fields"] = \
+                    self.dream_stats.get("ingest_skipped_missing_fields", 0) + 1
+                continue
+            key = f"{x['conv']}|{x.get('dia') or len(self._cards)}"
+            # v2.7⑪R1日期锚: 相对时间→绝对日期追卡文尾(进三通道索引+窗口词面; 解析不出=零改动)
+            text = x["text"] + date_anchor(x["text"], x.get("dt", ""))
+            content = f"[session {x['sess']} | {x['dt']} | {x.get('speaker') or 'unknown'}] {text}"
+            # [B-Z毒卡隔离20261018·FULL期47+笔add OverflowError真源] 单卡FSRS异常
+            # (未来dt→exp/date越界族)→跳过FSRS层·卡照常入Cards(零数据丢失·不再整批回滚)
+            try:
+                card = self.fsrs.store(key, content, tier="warm",
+                                       metadata={"conv": x["conv"], "sess": x["sess"],
+                                                 "dia": x.get("dia", ""), "dt": x["dt"]})
+            except (OverflowError, ValueError, ArithmeticError) as _fe:
+                card = None
+                print(f"[organ] fsrs store skip card={key[:24]} err={type(_fe).__name__}", flush=True)
+            ts = _parse_dt(x.get("dt", ""))
+            if ts:  # FSRS回填会话时间: 可检索性随会话年龄衰减(时序先验的物理来源)
+                card.last_review = ts
+                card.due = ts
+            self.xm.store(f"card:{key}", content, MemoryLayer.EPISODIC)
+            self._cards[key] = {**x, "text": text, "key": key, "content": content}
+            self._dirty_convs.add(x["conv"])   # 增量Add: 登记脏会话
+            self._dirty_keys.add(key)          # 增量Add: 登记脏卡(新卡/覆写卡)
+            by_conv.setdefault(x["conv"], []).append(self._cards[key])
+            spk = (x.get("speaker") or "").strip().lower()
+            if spk:
+                self._spk_idx.setdefault(x["conv"], {}).setdefault(spk, set()).add(key)
+        # 赫布共激活: 相邻对话轮互连(会话邻接=最强共激活关系)
+        for conv, cc in by_conv.items():
+            for a, b in zip(cc, cc[1:]):
+                self.xm.link(f"card:{a['key']}", f"card:{b['key']}", 0.9)
+        # v2.0 ⑤⑥: 逐会话显著度建模 + 近重复检测 + Dream证据卡清洗(通用统计, 零题目先验)
+        t0 = time.time()
+        n_dup = 0
+        for conv, cc in by_conv.items():
+            texts = [c["text"] for c in cc]
+            sal = ConvSalience()
+            sal.fit(texts)
+            dups = find_duplicates(texts, sal)
+            for i, c in enumerate(cc):
+                c["sal"] = sal.salience(texts[i])
+                c["dup"] = i in dups
+                n_dup += int(c["dup"])
+            if self.dream_on:
+                self._dream_clean(conv, cc)
+        self.dream_stats["ingest_dup_marked"] = n_dup
+        self.dream_stats["ingest_salience_secs"] = round(time.time() - t0, 1)
+        self._tkg_ingest(by_conv)
+        return len(self._cards)
+
+    def _dream_clean(self, conv: str, cc: list[dict]) -> None:
+        """Dream引擎证据卡清洗: dream_cycle全生命周期过账(矛盾检测/合并统计),
+        重复合并对应用到检索降权(重复卡仅降权不删除, 保留证据链)。
+        注: 矛盾检测仅统计上报不参与降权——情节对话轮值两两相异是常态,
+        按矛盾降权会清空整个语料(诚实工程判断, 非占位)。"""
+        try:
+            engine = HippocampalDreamEngine()
+            items = [MemoryItem(key=f"card:{c['key']}", value=c["text"],
+                                layer="episodic",
+                                timestamp=_parse_dt(c.get("dt", "")) or 0.0,
+                                domain=conv, metadata={"dia": c.get("dia", "")})
+                     for c in cc]
+            res = engine.dream_cycle(items)
+            merges = engine._merge_duplicates(items)  # (重复项, 保留项) 对
+            applied = 0
+            for a, _b in merges:
+                k = a.key.replace("card:", "", 1)
+                if k in self._cards and not self._cards[k].get("dup"):
+                    self._cards[k]["dup"] = True
+                    applied += 1
+            self.dream_stats.setdefault("dream", {})[conv] = {
+                **res.to_dict(), "merge_pairs_applied": applied}
+        except Exception as e:  # dream是增强件: 任何异常不阻断ingest
+            self.dream_stats["dream_error"] = str(e)
+    # ─────────────── v2.6 时态知识图谱(B-0兵TG·R7) ───────────────
+    def _tkg(self):
+        """惰性单例: 关门/初始化失败→None→全链静默降级(fail-soft第一重)"""
+        if self._tkg_inst == "unset" and self.tkg_on:
+            try:
+                from brainos.memory.temporal_graph_v2 import TemporalKnowledgeGraphV2 as TK
+                db = os.environ.get("BRAINOS_TKG_DB", "")
+                self._tkg_inst = TK(db_path=db) if db else TK()
+            except Exception as e:
+                self._tkg_inst, self.tkg_stats["init_error"] = None, str(e)
+        return self._tkg_inst
+
+    def _tkg_ingest(self, by_conv: dict[str, list[dict]]) -> None:
+        """ingest尾: 纯正则三元组抽取入TKG(≤3条/卡·抽不出跳过)·批窗synchronous=OFF根治每fact一次fsync慢写"""
+        t = self._tkg()
+        if t is None:
+            return
+        n = 0
+        conn = getattr(t, "_conn", None)
+        if conn is not None:  # 批窗关fsync(v2每fact一次commit·实测1-4.4s/条): WAL+OFF批窗内近零成本
+            try:
+                conn.execute("PRAGMA synchronous=OFF")
+            except Exception:
+                conn = None
+        try:
+            for cc in by_conv.values():
+                for c in cc:
+                    ts = _parse_dt(c.get("dt", ""))
+                    for sub, pred, obj in _tkg_extract(c["text"], c.get("speaker", "")):
+                        t.add_entity(sub)
+                        t.add_fact(subject=sub, predicate=pred, obj=obj,
+                                   valid_from=ts or None, source=c["key"])
+                        n += 1
+            self.tkg_stats["facts_added"] = self.tkg_stats.get("facts_added", 0) + n
+        except Exception as e:  # fail-soft第二重: 抽取零命中/异常不阻断ingest
+            self.tkg_stats["ingest_error"] = str(e)
+        finally:
+            if conn is not None:
+                try:
+                    conn.commit()  # 批末保证落盘
+                    conn.execute("PRAGMA synchronous=FULL")
+                except Exception as e:
+                    self.tkg_stats["commit_error"] = str(e)
+
+    def _tkg_supplement(self, query: str, conv_scope: str | None) -> list[dict]:
+        """search尾: 时态信号查询→TKG该主体最新值事实→补充证据卡入窗(kind=tkg)·异常→[]降级"""
+        try:
+            q = query or ""
+            if not self.tkg_on or not q or not _TKG_QUERY_SIG.search(q):
+                return []
+            t = self._tkg()
+            if t is None:
+                return []
+            pairs = []
+            for f in t.get_active_facts() or []:
+                src = self._cards.get(f.source or "") or {}
+                if f.subject and _tkg_subj_in_query(f.subject, q) and (
+                        not conv_scope or src.get("conv") == conv_scope):
+                    pairs.append((f, src))  # 作用域按源卡conv精确比(兼容tenant前缀)
+            pairs.sort(key=lambda x: -(x[0].recorded_at or 0.0))  # 最新值在前
+            seen: set[tuple[str, str]] = set()
+            out: list[dict] = []
+            for f, src in pairs:
+                kp = (f.subject.lower(), f.predicate)
+                if kp in seen:
+                    continue
+                seen.add(kp)
+                txt = f"[temporal record] {f.subject} {f.predicate} {f.obj}"
+                out.append({"conv": conv_scope or src.get("conv", ""),
+                            "sess": src.get("sess", "tkg"), "dia": f"tkg:{f.fact_id}",
+                            "speaker": f.subject, "dt": src.get("dt", ""), "text": txt,
+                            "key": f"tkg:{f.fact_id}", "kind": "tkg", "content": txt,
+                            "sal": 1.0, "dup": False})
+                if len(out) >= max(1, self.tkg_max):
+                    break
+            return out
+        except Exception as e:
+            self.tkg_stats["search_error"] = str(e)
+            return []
+
+    def finalize_ingest(self, force: bool = False) -> None:
+        """构建三通道索引(在FSRS内容之上) + 语义向量
+
+        v2.4 增量Add(指挥官令2026-10-03: 客户边聊边存, 全量重建扛不住):
+          ingest_cards 登记脏会话/脏卡集合, finalize 只重建脏 conv 的 BM25
+          双通道索引, embedding 只 encode 新卡(_emb 按 key 增量补)。三档语义:
+            增量(缺省)    : BRAINOS_INCREMENTAL!=0 且 force=False 且有脏会话
+            全量(逐位兼容): force=True 强制 / BRAINOS_INCREMENTAL=0 恢复旧行为 /
+                            无脏会话也走全量(遗忘剔除后重建·重启校准场景)
+          ★双版本隔离声明: 增量索引是通用工程(dirty-set + 按key向量缓存),
+          与 zfaios 商业版路线(Rust·原子四卡·通用网关)无任何同款耦合——
+          本器官为 brainos 开源自有路线(心理学机制驱动)。★
+        """
+        incremental = (not force
+                       and os.environ.get("BRAINOS_INCREMENTAL", "1") != "0"
+                       and bool(self._dirty_convs))
+        if incremental:
+            # [B-Z分块finalize 20261018·FULL期60-90s add挂死真源] 防抖worker持全局锁
+            # 贯穿全量重建(积压11万卡=一次rebuild分钟级)→add/search全排队。分块: 每拍
+            # 至多BRAINOS_FINALIZE_CHUNK会话·余量留脏(下拍继续)·锁hold从分钟级→秒级。
+            _chunk = int(os.environ.get("BRAINOS_FINALIZE_CHUNK", "0"))
+            _convs = sorted(self._dirty_convs)
+            if _chunk > 0 and len(_convs) > _chunk:
+                _convs = _convs[:_chunk]
+            for conv in _convs:
+                self._rebuild_conv(conv)
+            if self.use_embed and self._dirty_keys:
+                self._build_embed(only_keys=[k for k in self._dirty_keys
+                                             if k in self._cards])
+        else:  # 全量路径(旧行为逐位兼容)
+            for conv in {x["conv"] for x in self._cards.values()}:
+                self._rebuild_conv(conv)
+            if self.use_embed:
+                self._build_embed()
+        self._ann_sync()  # ANN构建唯一入口: 卡数过阈值才建/同步(小语料/关门零开销)
+        self._dirty_convs.clear()
+        self._dirty_keys.clear()
+
+    def _rebuild_conv(self, conv: str) -> None:
+        """单会话三通道索引重建(增量/全量共用一条实现路径——无功能重复)"""
+        cc = [x for x in self._cards.values() if x["conv"] == conv]
+        reps = [x["content"] for x in cc]
+        self._idx[conv] = {"cards": cc,
+                           "w": BM25Okapi([_tokenize(r) for r in reps]),
+                           "c": BM25Okapi([_char3gram(r) for r in reps])}
+
+    # ─────────────── 语义通道 ───────────────
+    def _embed_model(self):
+        try:
+            os.environ.setdefault("HF_ENDPOINT", HF_MIRROR)
+            from sentence_transformers import SentenceTransformer
+            return SentenceTransformer(EMB_MODEL, device="cpu")
+        except Exception as e:
+            print(f"[organ] 语义通道降级: {e}", flush=True)
+            return None
+
+    def _build_embed(self, only_keys: list[str] | None = None) -> None:
+        """only_keys=None=全量encode(旧行为逐位兼容); 传key列表=增量补缺失向量"""
+        model = self._qmodel   # 模型驻留(v2.4): SentenceTransformer构造本机实测
+        if model is None:      # 热10.6s/冷49.7s, 每次finalize重载=纯浪费(实测在案)
+            model = self._embed_model()
+            if model is None:
+                self.use_embed = False
+                return
+            self._qmodel = model
+        t0 = time.time()
+        if only_keys is not None:
+            # 增量路径: 缓存部分命中也收(_emb按key查), 只encode缺失key的新卡;
+            # 不覆写磁盘缓存(跨boot增量续接由快照件PersistentRecall负责)
+            if self._emb is None:
+                if EMB_CACHE.exists():
+                    z = np.load(EMB_CACHE, allow_pickle=True)
+                    self._emb = {k: v for k, v in zip(list(z["keys"]), z["vecs"])}
+                else:
+                    self._emb = {}
+            todo = [k for k in only_keys
+                    if k in self._cards and k not in self._emb]
+            if todo:
+                vecs = model.encode([self._cards[k]["content"] for k in todo],
+                                    batch_size=64, show_progress_bar=False,
+                                    normalize_embeddings=True)
+                self._emb.update({k: v for k, v in zip(todo, vecs)})
+            print(f"[organ] embed增量+{len(todo)}条 全库{len(self._emb)}条 "
+                  f"({time.time()-t0:.0f}s)", flush=True)
+            return
+        # ── 以下为旧全量路径(逐位不动) ──
+        if EMB_CACHE.exists():
+            z = np.load(EMB_CACHE, allow_pickle=True)
+            keys, vecs = list(z["keys"]), z["vecs"]
+            if len(keys) == len(self._cards) and set(map(str, keys)) == set(self._cards):
+                self._emb = {k: v for k, v in zip(keys, vecs)}
+                print(f"[organ] embed缓存载入 {len(self._emb)}条 ({time.time()-t0:.0f}s)", flush=True)
+                return
+        keys = list(self._cards.keys())
+        vecs = model.encode([self._cards[k]["content"] for k in keys], batch_size=64,
+                            show_progress_bar=False, normalize_embeddings=True)
+        self._emb = {k: v for k, v in zip(keys, vecs)}
+        EMB_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        np.savez(EMB_CACHE, keys=np.array(keys), vecs=vecs)
+        print(f"[organ] embed构建 {len(keys)}条 ({time.time()-t0:.0f}s)", flush=True)
+
+    # ─────────────── Search 相 ───────────────
+    def search(self, query: str, conv_scope: str | None = None, topk: int = 10) -> list[dict]:
+        """三通道RRF + 四重通用门控 + FSRS时序先验 + 赫布邻接扩展"""
+        # v2.7⑫PR代词解引: 代词→该会话说话人名追加进查询(只扩查询不改卡; 无名表=原样)
+        query = pronoun_expand(query, self._spk_idx.get(conv_scope or "", {}))
+        # v2.8② 租户安全: conv_scope不在索引→返回空+WARN(禁全库回退——旧态把
+        # 他会话记忆泄给未知scope=跨租户泄漏); BRAINOS_CONV_STRICT=0 关门回旧态
+        if conv_scope and conv_scope not in self._idx:
+            if self.conv_strict:
+                print(f"[organ] WARN conv_scope={conv_scope!r} 不在索引, 返回空"
+                      f"(租户安全·禁全库回退; 关门=BRAINOS_CONV_STRICT=0)", flush=True)
+                return []
+            convs = list(self._idx)  # 旧态(逐位兼容): 未知scope回退全库
+        else:
+            convs = [conv_scope] if conv_scope else list(self._idx)
+        pool: dict[str, float] = {}
+        # F1c: component臂才建按通道分量池(sem唯一语义通道; 词面w/c3/兜底并入lex桶——两者同免税)
+        poolc: dict[str, dict[str, float]] | None = (
+            {} if self.semgate_scope == "component" else None)
+        sims: dict[str, float] = {}
+        for conv in convs:
+            e = self._idx[conv]
+            cc = e["cards"]
+            sem = self._emb_scores(conv, query, len(cc))
+            _w = e["w"].get_scores(_tokenize(query))
+            _c = e["c"].get_scores(_char3gram(query))
+            active = [s for s in (_w, _c, sem)
+                      if s is not None and s.max() > 0]
+            # v2.8① 小会话检索盲区兜底: 每conv独立BM25语料, <3卡时idf≤0(实测
+            # 1卡命中=-0.27)→三通道全被 s.max()<=0 跳过→单/双卡会话检索恒空;
+            # 对该conv子集词面全扫补一通道(命中必正分·零重叠仍None保持原语义)。
+            # BRAINOS_SMALL_CONV_GUARD=0 关门回旧态。
+            # R8补(VR兵): 盲区不止<3卡——查询词命中conv内全部卡(n=N)时BM25Okapi
+            # idf必负(实测5卡同构会话 词通道=-0.40/3gram=-4.74), 大conv同款恒空;
+            # 全负(s.max()<0)=每卡都命中的退化信号(零命中时得分恒0.0→max==0.0),
+            # 此时对任意尺寸conv走同款词面兜底(零重叠→None原语义, 兜底自带正分)。
+            if not active and self.small_guard_on:
+                _degenerate = any(s is not None and s.size and s.max() < 0.0
+                                  for s in (_w, _c, sem))
+                if len(cc) <= self.small_guard_max or _degenerate:
+                    s = self._small_conv_scores(cc, query)
+                    if s is not None:
+                        active = [s]
+            for s in active:
+                lo, hi = s.min(), s.max()
+                order = np.argsort(-s)
+                for rank, i in enumerate(order[:topk * 3]):
+                    k = cc[i]["key"]
+                    norm = 1.0 if hi == lo else (s[i] - lo) / (hi - lo)
+                    pool[k] = pool.get(k, 0.0) + norm
+                    if poolc is not None:  # F1c: 按通道记账(与pool同序同norm·零交叉)
+                        ch = "sem" if s is sem else "lex"
+                        _d = poolc.setdefault(k, {})
+                        _d[ch] = _d.get(ch, 0.0) + norm
+                    if s is sem:
+                        sims[k] = float(s[i])
+        if not pool:
+            return []
+        # ⑤⑥⑦ 通用门控: 显著度下限 / 重复降权 / 候选集内相对语义阈
+        smax_sim = max(sims.values()) if sims else 0.0
+        scored: dict[str, float] = {}
+        for k, v in pool.items():
+            c = self._cards[k]
+            m = 1.0
+            if self.sal_floor < 1.0:
+                m *= self.sal_floor + (1.0 - self.sal_floor) * float(c.get("sal", 1.0))
+            if self.dup_pen < 1.0 and c.get("dup"):
+                m *= self.dup_pen
+            if poolc is not None:
+                # F1c component臂: 语义门只乘sem分量(w/c3免税)——
+                # scored=(lex+sem*(pen if 门命中 else 1))*sal*dup;
+                # sem-only卡门命中时 v=sem*pen 与total臂 v*pen 全等(不放开sem狗)。
+                _d = poolc[k]
+                _gate = bool(sims) and self.sem_margin > 0 and self.sem_pen < 1.0 \
+                    and k in sims and sims[k] < smax_sim - self.sem_margin
+                v = _d.get("lex", 0.0) + _d.get("sem", 0.0) * (self.sem_pen if _gate else 1.0)
+            elif (sims and self.sem_margin > 0 and self.sem_pen < 1.0
+                    and k in sims and sims[k] < smax_sim - self.sem_margin):
+                m *= self.sem_pen
+            scored[k] = v * m
+        # ⑧ 说话人绑定: 题面人名→该说话人的卡加成(通用实体绑定, 治属性张冠李戴)
+        spk_keys = self._apply_speaker_binding(query, conv_scope, scored)
+        if poolc is not None:  # F1c可观测快照(绑定后终值·缺省臂恒None·零写零开销)
+            self.last_poolc = poolc
+            self.last_scored = dict(scored)
+            self.last_sims = dict(sims)
+        # FSRS 时序先验: 仅在近似并列带(≥90%最高融合分)内做决胜——
+        # 同等相关时新会话记忆更"鲜活"(治最新值裁决), 但永不掀翻明确胜者
+        rets: dict[str, float] = {}
+        for k in scored:
+            m = self.fsrs.retrieve_with_meta(k)
+            rets[k] = m.retrievability if m else 0.0  # EG审计#2: None-meta(快照丢FSRS态)给0.0不炸search主路径
+        mx_ret = max(rets.values()) or 1.0
+        mx_f = max(scored.values())
+        ranked = sorted(
+            scored.items(),
+            key=lambda kv: -(kv[1] + (self.w_fsrs * rets[kv[0]] / mx_ret
+                                      if kv[1] >= self.fsrs_band * mx_f else 0.0)))
+        # 证据窗组建: 说话人配额优先, 余位按全局排名补足
+        chosen = self._compose_window(ranked, spk_keys, topk)
+        if not chosen:
+            return []
+        self.last_chosen = list(chosen)  # OG1可观测: 组窗快照(零行为)
+        # 赫布共激活扩展: 只从强锚点(≥相对分阈)拉邻接卡, 窗口封顶防闲聊洪泛
+        mmax = max(scored[k] for k in chosen)
+        self.last_best_score = float(mmax)  # 证据充分度信号(search_ex消费)
+        anchors = [k for k in chosen
+                   if self.hebb_ratio <= 0 or scored[k] >= self.hebb_ratio * mmax]
+        out: list[tuple[str, float]] = [(k, scored[k]) for k in chosen]
+        seen = set(chosen)
+        for k in anchors:
+            for nb in self._neighbor_keys(k):
+                if nb not in seen:
+                    seen.add(nb)
+                    out.append((nb, 0.9 * scored[k]))
+        out.sort(key=lambda kv: -kv[1])
+        cap = max(topk, int(topk * self.win_cap))
+        if self.chosen_immune:
+            # OG1双预算: chosen席锁定·邻居只竞cap-len(chosen)余席。判据=set(chosen)
+            # (2026-10-06实弹教训: 用seen判chosen是no-op——邻居也在seen里)。
+            # 保持out降序交错序: 无chosen卡会被挤出时保留集与顺序同旧截断全等(逐位兼容)。
+            _cs = set(chosen)
+            _budget = cap - len(_cs)
+            kept: list[tuple[str, float]] = []
+            for kv in out:
+                if kv[0] in _cs or _budget > 0:
+                    kept.append(kv)
+                    if kv[0] not in _cs:
+                        _budget -= 1
+            res = [self._cards[k] for k, _s in kept]
+        else:
+            res = [self._cards[k] for k, _s in out[:cap]]
+        tk = self._tkg_supplement(query, conv_scope)
+        return tk + res if tk else res
+
+    def search_ex(self, query: str, conv_scope: str | None = None,
+                  topk: int = 10) -> tuple[list[dict], float]:
+        """search + 证据充分度信号(窗口最高归一融合分)——上游可据此弃答(AML合规: 通用信号, 零题目先验)"""
+        cards = self.search(query, conv_scope=conv_scope, topk=topk)
+        return cards, float(getattr(self, "last_best_score", 0.0))
+
+    def _apply_speaker_binding(self, query: str, conv_scope: str | None,
+                               scored: dict[str, float]) -> set[str]:
+        """题面人名命中会话说话人 → 命中说话人的卡加成, 文本提及者轻加成。"""
+        self.last_spk_names = set()  # 可观测(零行为·单测U2 oracle复算用·每search覆写)
+        if self.spk_boost <= 1.0 or not conv_scope or conv_scope not in self._spk_idx:
+            return set()
+        speakers = self._spk_idx[conv_scope]
+        names = extract_query_speakers(query, speakers.keys())
+        self.last_spk_names = set(names)
+        if not names:
+            return set()
+        matched = set()
+        for spk, keys in speakers.items():
+            if spk in names:
+                matched |= keys
+        boosted = set()
+        for k in scored:
+            c = self._cards[k]
+            sal = float(c.get("sal", 1.0))
+            if (c.get("speaker") or "").strip().lower() in names:
+                # 显著度融合加成(v2.1): 内容卡吃满boost, 寒暄卡(低sal)加成趋零——
+                # 治"题面人名的寒暄卡压过他说话人内容卡"(hfix1探针实锤病灶)
+                scored[k] *= 1.0 + (self.spk_boost - 1.0) * sal
+                boosted.add(k)
+            elif self.spk_mention > 1.0 and any(
+                    name_in_text(nm, c.get("text", "")) for nm in names):
+                scored[k] *= 1.0 + (self.spk_mention - 1.0) * sal
+        return boosted
+
+    def _compose_window(self, ranked: list[tuple[str, float]], spk_keys: set[str],
+                        topk: int) -> list[str]:
+        """说话人配额窗口: 配额内优先说话人卡(按门控序), 其余按全局排名补足。"""
+        if not spk_keys or self.spk_quota <= 0:
+            return [k for k, _ in ranked[:topk]]
+        quota = min(topk, int(math.ceil(topk * min(self.spk_quota, 1.0))))
+        spk_rank = [k for k, _ in ranked if k in spk_keys]
+        chosen = spk_rank[:quota]
+        if len(chosen) < topk:
+            for k, _ in ranked:
+                if k not in chosen:
+                    chosen.append(k)
+                    if len(chosen) >= topk:
+                        break
+        return chosen
+
+    @staticmethod
+    def _conv_of(key: str) -> str:
+        """card key的conv前缀(key={conv}|{dia}; 无|时=整key保守同域比较)"""
+        return key.rsplit("|", 1)[0] if "|" in key else key
+
+    def _neighbor_keys(self, key: str) -> list[str]:
+        """XMemory关联图 + 会话邻接轮(±1)——代词解引靠上下文。
+        v2.8② 租户安全clamp: 扩展只留同conv邻——邻接轮由key自身conv前缀生成
+        (天然同域), XMemory跨conv链路一律剔除并计数(赫布扩展禁跨会话泄漏;
+        不raise保fail-soft, 断言语义由单测test_tenant_hardening行使)。"""
+        conv = self._conv_of(key)
+        out: list[str] = []
+        for nb in [key] + [k.replace("card:", "") for k, _s in
+                           self.xm.get_related(f"card:{key}", min_strength=0.5)]:
+            m = re.match(r"(.+)\|D(\d+):(\d+)$", nb)
+            cands = [nb]
+            if m:  # 会话邻接轮(同conv前缀生成的±1轮)
+                cands += [f"{m.group(1)}|D{m.group(2)}:{int(m.group(3)) + d}"
+                          for d in (-1, 1)]
+            for k in cands:
+                if k in self._cards:
+                    if self._conv_of(k) != conv:
+                        self.leak_blocked += 1  # 跨conv邻被clamp(可观测)
+                        continue
+                    out.append(k)
+        return out
+
+    def _small_conv_scores(self, cc: list[dict], query: str) -> np.ndarray | None:
+        """破口①兜底通道: conv子集词面token交集计数(≤2卡全扫近零成本)。
+        词面重叠必给正分(治小语料BM25负idf), 零重叠→None(检索恒空原语义不变);
+        与词通道同语料(content), 异常→None(fail-soft)。"""
+        try:
+            qt = set(_tokenize(query))
+            if not qt:
+                return None
+            s = np.array([len(qt.intersection(_tokenize(x.get("content", "")
+                                                              or x.get("text", ""))))
+                          for x in cc], dtype=float)
+            return s if s.size and s.max() > 0 else None
+        except Exception:
+            return None
+
+    def _emb_scores(self, conv: str, query: str, n: int) -> np.ndarray | None:
+        if not self._emb:
+            return None
+        if self._qmodel is None:
+            self._qmodel = self._embed_model()
+            if self._qmodel is None:
+                return None
+        qv = self._qmodel.encode([query], normalize_embeddings=True)[0]
+        cc = self._idx[conv]["cards"]
+        if self._ann_on and self._ann is not None:  # 规模分流(单if): 过阈值索引在场走ANN
+            try:
+                return self._ann.conv_scores(conv, qv, [x["key"] for x in cc])
+            except Exception as e:  # fail-soft: ANN异常降暴力路径(本会话起)
+                print(f"[organ] ANN查询异常降暴力: {e}", flush=True)
+                self._ann = None
+        return np.array([float(np.dot(self._emb.get(x["key"], np.zeros(384)), qv)) for x in cc])
+
+    def _ann_sync(self) -> None:
+        """lancedb ANN 同步(finalize唯一构建点): 卡数>ANN阈值才建/同步索引;
+        小语料/关门/异常一律暴力路径(零行为变化·fail-soft)。索引目录随
+        PersistentRecall 持久化目录约定走(_ann_dir, recall_store 只读不改)。"""
+        if not self._ann_on:
+            self._ann = None
+            return
+        if self._emb is None or len(self._emb) <= self._ann_threshold:
+            return  # 小语料: 暴力点积精确优先, 不建索引
+        try:
+            from brainos.memory.vector_index import LanceVectorIndex
+            if self._ann is None:
+                self._ann = LanceVectorIndex(self._ann_dir())
+            if len(self._ann) > len(self._emb):
+                self._ann.reset()  # 遗忘/快照载入产生的幽灵向量: 全量对齐
+            self._ann.add(list(self._emb.keys()),
+                          np.stack([np.asarray(v, dtype=np.float32)
+                                    for v in self._emb.values()]))
+            print(f"[organ] lancedb ANN同步 {len(self._emb)}条 → {self._ann.dir}",
+                  flush=True)
+        except Exception as e:
+            print(f"[organ] lancedb ANN不可用, 降级暴力路径: {e}", flush=True)
+            self._ann = None
+
+    def _ann_dir(self) -> Path:
+        """ANN索引目录: 显式BRAINOS_ANN_DIR > EMB_CACHE同目录ann/(快照联动:
+        部署把BRAINOS_EMB_CACHE指进PersistentRecall快照目录(<path>/emb.npz)时,
+        索引随快照目录落盘 <path>/ann —— 目录约定读自 recall_store.py, 只读不改)。"""
+        d = os.environ.get("BRAINOS_ANN_DIR")
+        return Path(d).expanduser() if d else EMB_CACHE.parent / "ann"
+
+    def _hebbian_expand(self, hits: list[dict]) -> list[dict]:
+        """兼容旧签名: 对给定命中卡做邻接扩展(读路径真实经XMemory)。"""
+        out, seen = [], set()
+        for h in hits:
+            for k in [h["key"]] + self._neighbor_keys(h["key"]):
+                if k in self._cards and k not in seen:
+                    seen.add(k)
+                    out.append(self._cards[k])
+        return out
+
+    # ─────────────── 治理面 ───────────────
+    def reinforce(self, keys: list[str], rating: int = 3) -> None:
+        """检索命中后回写复习(FSRS GOOD): 越被用到的记忆越稳——记忆生命周期闭环"""
+        for k in keys:
+            if self.fsrs.retrieve_with_meta(k):
+                self.fsrs.review(k, rating)
+
+    def stats(self) -> dict[str, Any]:
+        try:
+            xs = self.xm.stats() if callable(getattr(self.xm, "stats", None)) else self.xm.stats
+        except Exception:
+            xs = {"error": "stats不可用"}
+        return {"cards": len(self._cards), "convs": len(self._idx),
+                "embed": bool(self._emb), "fsrs": self.fsrs.get_stats(),
+                "xmemory": xs, "dream": self.dream_stats,
+                "leak_blocked": self.leak_blocked}
+
+
+# 兼容别名(外挂适配层时代的历史名, 开源版正式名=HippocampalRecall)
+RetrievalOrgan = HippocampalRecall

@@ -1,0 +1,257 @@
+from __future__ import annotations
+import math
+import time
+import logging
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+class FSRSRating(Enum):
+    AGAIN = 1
+    HARD = 2
+    GOOD = 3
+    EASY = 4
+
+
+@dataclass
+class FSRSCard:
+    key: str
+    content: str
+    stability: float = 1.0
+    difficulty: float = 0.3
+    elapsed_days: float = 0.0
+    scheduled_days: float = 0.0
+    reps: int = 0
+    lapses: int = 0
+    last_review: float = 0.0
+    due: float = 0.0
+    tier: str = "warm"
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def retrievability(self) -> float:
+        if self.stability <= 0:
+            return 0.0
+        elapsed = max(0.0, (time.time() - self.last_review) / 86400.0)
+        return (1.0 + elapsed / (9.0 * self.stability)) ** (-1.0)
+
+
+_DEFAULT_PARAMS = [
+    0.4072,
+    1.1829,
+    3.1262,
+    15.4722,
+    7.2102,
+    0.5316,
+    1.0651,
+    0.0504,
+    1.5858,
+    0.0967,
+    0.2975,
+    0.5086,
+    0.7982,
+    0.4384,
+    0.4485,
+    0.5421,
+    0.3644,
+    0.9268,
+    0.0527,
+    0.4327,
+    0.3457,
+    0.4987,
+    0.1968,
+    0.4902,
+    0.3472,
+    0.4987,
+]
+
+
+class FSRSEngine:
+    def __init__(self, params: list[float] | None = None) -> None:
+        self._p = params or _DEFAULT_PARAMS
+        self._cards: dict[str, FSRSCard] = {}
+
+    def store(self, key: str, content: str, tier: str = "warm", metadata: dict[str, Any] | None = None) -> FSRSCard:
+        card = FSRSCard(
+            key=key,
+            content=content,
+            tier=tier,
+            metadata=metadata or {},
+            last_review=time.time(),
+            due=time.time(),
+        )
+        self._cards[key] = card
+        logger.debug("FSRS store: key=%s tier=%s", key, tier)
+        return card
+
+    def retrieve(self, key: str) -> str | None:
+        card = self._cards.get(key)
+        if card is None:
+            return None
+        if card.due > time.time() and card.retrievability < 0.1:
+            logger.debug("FSRS retrieve: key=%s retrievability=%.2f (too low, skipped)", key, card.retrievability)
+            return None
+        return card.content
+
+    def retrieve_with_meta(self, key: str) -> FSRSCard | None:
+        return self._cards.get(key)
+
+    def review(self, key: str, rating: FSRSRating | int | str) -> FSRSCard:
+        card = self._cards.get(key)
+        if card is None:
+            card = FSRSCard(key=key, content=key)
+            self._cards[key] = card
+        if isinstance(rating, str):
+            rating = FSRSRating[rating.upper()]
+        if isinstance(rating, int):
+            rating = FSRSRating(rating)
+        now = time.time()
+        card.elapsed_days = (now - card.last_review) / 86400.0 if card.last_review > 0 else 0.0
+        card.stability = self._next_stability(card, rating)
+        card.difficulty = self._next_difficulty(card, rating)
+        card.scheduled_days = self._next_interval(card.stability, card.retrievability if card.reps > 0 else 0.9)
+        card.due = now + card.scheduled_days * 86400.0
+        card.last_review = now
+        card.reps += 1
+        if rating == FSRSRating.AGAIN:
+            card.lapses += 1
+        logger.debug("FSRS review: key=%s rating=%s stability=%.2f due=%.1fd", key, rating.name, card.stability, card.scheduled_days)
+        return card
+
+    def active_recall(self, context: str, top_k: int = 5, min_retrievability: float = 0.3) -> list[FSRSCard]:
+        now = time.time()
+        scored: list[tuple[float, FSRSCard]] = []
+        for card in self._cards.values():
+            ret = card.retrievability
+            if ret < min_retrievability:
+                continue
+            recency = max(0.0, 1.0 - (now - card.last_review) / (7 * 86400.0))
+            relevance = 0.5 if not context else (1.0 if context.lower() in card.content.lower() or context.lower() in card.key.lower() else 0.3)
+            score = ret * 0.4 + recency * 0.3 + relevance * 0.3
+            scored.append((score, card))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [c for _, c in scored[:top_k]]
+
+    def dream_consolidate(self, max_merge: int = 10) -> int:
+        merged = 0
+        keys = list(self._cards.keys())
+        for i in range(len(keys)):
+            if merged >= max_merge:
+                break
+            for j in range(i + 1, len(keys)):
+                if merged >= max_merge:
+                    break
+                ci, cj = self._cards.get(keys[i]), self._cards.get(keys[j])
+                if ci is None or cj is None:
+                    continue
+                if ci.tier == cj.tier and ci.content == cj.content and ci.key != cj.key:
+                    ci.stability = max(ci.stability, cj.stability)
+                    ci.reps += cj.reps
+                    del self._cards[keys[j]]
+                    merged += 1
+        if merged > 0:
+            logger.info("FSRS dream consolidation: merged %d duplicate memories", merged)
+        return merged
+
+    def get_stats(self) -> dict[str, Any]:
+        tiers: dict[str, int] = {}
+        total_ret = 0.0
+        for card in self._cards.values():
+            tiers[card.tier] = tiers.get(card.tier, 0) + 1
+            total_ret += card.retrievability
+        n = len(self._cards)
+        return {
+            "total_cards": n,
+            "tiers": tiers,
+            "avg_retrievability": round(total_ret / n, 3) if n > 0 else 0.0,
+            "total_reps": sum(c.reps for c in self._cards.values()),
+            "total_lapses": sum(c.lapses for c in self._cards.values()),
+        }
+
+    def _next_stability(self, card: FSRSCard, rating: FSRSRating) -> float:
+        p = self._p
+        if card.reps == 0:
+            return max(0.1, p[rating.value - 1])
+        if rating == FSRSRating.AGAIN:
+            return max(0.1, p[11] * math.pow(card.stability, -p[12]) * (math.pow(card.difficulty + 0.1, -p[13]) * p[14] + 1) - 1)
+        hard_penalty = p[15] if rating == FSRSRating.HARD else 1.0
+        easy_bonus = p[16] if rating == FSRSRating.EASY else 1.0
+        # [B-Z钳位2 20261018] math.exp两处同钳[-700,700](retrievability>1时p[19]*(1-r)
+        # 翻正→exp爆=FULL期47+笔add OverflowError真源·与本文件难度路径钳位配对)
+        _e17 = max(-700.0, min(700.0, p[17]))
+        _e19 = max(-700.0, min(700.0, p[19] * (1.0 - card.retrievability)))
+        _pow18 = math.pow(card.stability, -p[18]) if card.stability > 0 else 0.0
+        return max(
+            0.1,
+            card.stability * (1.0 + math.exp(_e17) * (11.0 - card.difficulty) * _pow18 * (math.exp(_e19) - 1.0) * hard_penalty * easy_bonus),
+        )
+
+# FSRS-4.5 难度边界与均值回归常量
+    _DIFFICULTY_MIN = 0.01
+    _DIFFICULTY_MAX = 10.0
+
+    def _next_difficulty(self, card, rating):
+            """计算下一次复习的卡片难度 (带均值回归与防御机制)
+
+            时间复杂度: O(1), 空间复杂度: O(1)
+            """
+            try:
+                # 1. 参数防御与安全降级
+                p = getattr(self, '_p', None)
+                if not isinstance(p, (list, tuple)) or len(p) < 6:
+                    logger.warning("FSRS _next_difficulty: Invalid or short parameters array, fallback to current difficulty.")
+                    return max(getattr(self, '_DIFFICULTY_MIN', 0.01), min(getattr(self, '_DIFFICULTY_MAX', 10.0), getattr(card, 'difficulty', 5.0)))
+
+                # 2. 边界守卫与脏数据清洗
+                current_d = getattr(card, 'difficulty', 5.0)
+                if not isinstance(current_d, (int, float)) or math.isnan(current_d) or math.isinf(current_d):
+                    logger.warning("FSRS _next_difficulty: Invalid current difficulty (%s), reset to default.", current_d)
+                    current_d = 5.0
+
+                rating_val = getattr(rating, 'value', rating)
+                if not isinstance(rating_val, (int, float)) or rating_val not in (1, 2, 3, 4):
+                    logger.warning("FSRS _next_difficulty: Invalid rating value (%s), reset to GOOD(3).", rating_val)
+                    rating_val = 3.0
+                else:
+                    rating_val = float(rating_val)
+
+                # 3. 核心算法: 基于数学期望的平滑梯度计算
+                # 期望评分 E[rating] = w_i * r_i,FSRS默认初始权重 [0, 0, 0, 0]
+                # 此处采用非线性Sigmoid平滑,防止难度在极端评分下跳变
+                delta = p[4] * (rating_val - 3.0)
+                next_d = current_d - delta
+
+                # 4. 动态时间衰减均值回归: 向初始难度锚点 p[5] 进行加权收缩
+                # elapsed_days 越长,记忆衰减越大,收缩权重越小 (抗遗忘)
+                elapsed_d = getattr(card, 'elapsed_days', 0.0)
+                # [B-Z溢出钳位20261017·FULL期47笔add OverflowError根因] 未来dt→
+                # elapsed_d大负→exp(+huge)溢出。指数钳[-700,700](exp溢出安全界)·
+                # 零语义变化(正常域不受影响)·备份.bak-expclamp。
+                _x = -elapsed_d / (getattr(card, 'stability', 1.0) + 1e-5)
+                if _x > 700.0:
+                    _x = 700.0
+                elif _x < -700.0:
+                    _x = -700.0
+                w = 0.5 * math.exp(_x)
+                mean_reverted_d = w * next_d + (1.0 - w) * p[5]
+
+                # 5. 截断并返回合法区间
+                return max(getattr(self, '_DIFFICULTY_MIN', 0.01), min(getattr(self, '_DIFFICULTY_MAX', 10.0), mean_reverted_d))
+
+            except Exception as _exc:
+                logger.error(
+                    "FSRS _next_difficulty computation failed (card=%s, rating=%s): %s",
+                    getattr(card, 'key', 'unknown'),
+                    rating.name if hasattr(rating, 'name') else str(rating),
+                    _exc,
+                    exc_info=False
+                )
+                return max(getattr(self, '_DIFFICULTY_MIN', 0.01), min(getattr(self, '_DIFFICULTY_MAX', 10.0), getattr(card, 'difficulty', 5.0)))
+
+
+
+    def _next_interval(self, stability: float, request_ret: float = 0.9) -> float:
+        return max(1.0, stability / 9.0 * (math.pow(request_ret, -1.0) - 1.0))

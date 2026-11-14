@@ -53,3 +53,8 @@ tag v0.10.0-aml(commit b2250b3a)全量公开于 production/src/(73 模块)。逐
 ## 四、开发期补丁与自测脚本（已一并入仓·非运行时路径）
 
 src/ 内 patch_*.py（18件·一次性迁移补丁工具）与 test_*.py（3件·本地自测）为开发期工具，正式评测运行时路径不加载（运行时引用核验=零import）；一并入仓以保源码完整可核验。
+
+## 五、战斗冻结核心 brainos_frozen（运行时必需·已入仓 production/brainos_frozen/）
+
+start_engine.sh 的 PYTHONPATH 顺序为 pylibs:brainos_frozen——运行期 `import brainos` 解析到**战斗冻结版核心（19模块·存储/持久化/情景-语义-程序-工作记忆/巩固/海马召回/FSRS引擎等）**，而非顶层 brainos/ 开源基线（80模块·v0.9上游·仅作历史参照）。本次正式评测(61.00·teval_e566217ef1617a43)实际运行的就是该冻结版；逐位同步自 VPS 部署目录 /www/braios_coding/brainos_frozen。
+部署布局映射：repo production/src ↔ 部署 /www/braios_coding/src；production/brainos_frozen ↔ /www/braios_coding/brainos_frozen；production/pylibs ↔ /www/braios_coding/pylibs；production/models ↔ /www/braios_coding/models。

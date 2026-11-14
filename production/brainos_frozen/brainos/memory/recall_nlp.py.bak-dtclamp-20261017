@@ -1,0 +1,219 @@
+# brainos 检索纯文本工具件 — hippocampal_recall 拆件(L0-5 C20≤700行: 拆文件不砍功能)
+# ═══════════════════════════════════════════════════════════════
+# 承接自 hippocampal_recall.py 的纯函数层(零状态·可独立单测·逐位兼容):
+#   _fenv/_parse_dt/_tokenize/_char3gram          —— 原样迁出
+#   date_anchor / pronoun_expand                  —— v2.7 双刀(B-0兵DP1·2026-10-03):
+#     ①R1日期锚: 相对时间("last night/a few days ago/N weeks ago"·中英)按卡自带会话
+#       日期锚(dt)解析为绝对日期"[= 1 May 2022]"追加卡文尾——治F2最大簇: 题问绝对日期
+#       而金卡只有相对时间→词面必然失配。索引进BM25/3gram/语义三通道+检索窗词面可见。
+#     ②PR代词解引: query含she/he/his/her/they(独立词)→该会话说话人名全追加进查询
+#       (只扩查询不改卡)——治C族: 题问人名相关但金卡第一人称说话的词面失配(RC定谳)。
+# 纯标准库(re/datetime)·零LLM·零HTTP·fail-soft: 解析不出/无锚/关门=原样返回零破坏。
+#   env: BRAINOS_DATE_ANCHOR=0 / BRAINOS_PRONOUN_RESOLVE=0 各自关门(缺省开)。
+# ═══════════════════════════════════════════════════════════════
+from __future__ import annotations
+
+import os
+import re
+from datetime import datetime, timedelta
+
+_DT_FORMATS = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d",
+               "%Y/%m/%d %H:%M", "%Y年%m月%d日 %H:%M", "%Y年%m月%d日")
+
+
+def _fenv(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, "") or default)
+    except ValueError:
+        return default
+
+
+def _parse_dt(s: str) -> float | None:
+    s = (s or "").strip()
+    if not s:
+        return None
+    for f in _DT_FORMATS:
+        try:
+            return datetime.strptime(s, f).timestamp()
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(s).timestamp()
+    except ValueError:
+        return None
+
+
+_CN_RUN = re.compile(r"[\u4e00-\u9fff]+")
+
+
+def _tokenize(s: str) -> list[str]:
+    # 双语口径(2026-10-03): 英文词元与旧版逐位一致; 中文连续段→单字+相邻双字
+    # (unigram+bigram, 中文检索标准法·零依赖·不引jieba)。纯英文输入中文段为空,
+    # 结果与旧版逐位相同(官方英文卷不受影响)。
+    s = s.lower()
+    toks: list[str] = []
+    for seg in _CN_RUN.findall(s):
+        toks += list(seg)
+        toks += [seg[i:i + 2] for i in range(len(seg) - 1)]
+    toks += re.findall(r"[a-z0-9]+", s)
+    return toks
+
+
+def _char3gram(s: str) -> list[str]:
+    # 双语口径(2026-10-03): 英文词边界3gram与旧版逐位一致; 中文段按字滑窗3gram
+    # 并入双字(小样实证: 纯滑窗对2字短查询零重叠, 并双字后命中——选后者)。
+    grams: list[str] = []
+    low = s.lower()
+    for seg in _CN_RUN.findall(low):
+        w = f"^{seg}$"
+        grams += [w[i:i + 3] for i in range(max(1, len(w) - 2))]
+        grams += [seg[i:i + 2] for i in range(len(seg) - 1)]
+    for w in re.findall(r"[a-z0-9]+", low):
+        w = f"^{w}$"
+        grams += [w[i:i + 3] for i in range(max(1, len(w) - 2))]
+    return grams
+
+
+# ─────────────── R1 日期锚 ───────────────
+# v2.7.1(DP1终端摸底修正): loco语料dt="1:56 pm on 8 May, 2023"式——_parse_dt解析不了
+# →锚全程零开火(fail-soft吞掉)。date_anchor改用_parse_dt_any宽解析(先_parse_dt再
+# "D Month, YYYY"/"Month D, YYYY"正则兜底)。金卡未覆盖形态实测补齐: last year/this
+# month/next month/this week/(two) weekends ago/last weekend/last+星期(含Tues缩写)/
+# last+季节/tomorrow/tonight——全部按会话日期锚dt解析, 锚面含星期名(问"what day"可命中)。
+_DATE_MONTHS = "January February March April May June July August September October November December".split()
+_DATE_WD_NAMES = "Monday Tuesday Wednesday Thursday Friday Saturday Sunday".split()
+_DATE_WD_IDX = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+_DATE_UNITS = {"day": 1, "week": 7, "weekend": 7, "month": 30, "year": 365}
+_DATE_NUM = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+             "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "couple": 2, "few": 3}
+_DATE_FIX = (  # 固定短语→相对天数(中英·负数=未来)
+    (re.compile(r"\b(?:yesterday|last night)\b", re.I), 1),
+    (re.compile(r"\blast week\b", re.I), 7),
+    (re.compile(r"\blast month\b", re.I), 30),
+    (re.compile(r"\blast year\b|去年", re.I), 365),
+    (re.compile(r"\bthis month\b|这个月|本月", re.I), 0),
+    (re.compile(r"\bnext month\b|下个月", re.I), -30),
+    (re.compile(r"\bthis week\b|本周|这周", re.I), 0),
+    (re.compile(r"\ba few days ago\b", re.I), 3),
+    (re.compile(r"\btomorrow\b|明天", re.I), -1),
+    (re.compile(r"\btonight\b|今晚", re.I), 0),
+    (re.compile(r"昨天|昨晚", re.I), 1),
+    (re.compile(r"前天", re.I), 2),
+    (re.compile(r"上周|上星期", re.I), 7),
+    (re.compile(r"上个月", re.I), 30),
+)
+_DATE_AGO = re.compile(
+    r"\b(a|an|one|two|three|four|five|six|seven|eight|nine|ten|couple|few|\d+)"
+    r"\s+(day|week|weekend|month|year)s?\s+ago\b", re.I)
+_DATE_CN_AGO = re.compile(r"([0-9一二两三四五六七八九十]+)\s*(?:个\s*)?(天|日|周|星期|月|年)\s*前")
+_DATE_CN_NUM = {"一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+_DATE_CN_UNIT = {"天": 1, "日": 1, "周": 7, "星期": 7, "月": 30, "年": 365}
+_DATE_WD_ABBR = r"(?:mon|tues?|weds?|thur?s?|fri|sat|sun)"
+_DATE_WD = re.compile(
+    r"\b(last|this|next|past)\s+((?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|"
+    + _DATE_WD_ABBR + r"))\b|(" + r"|".join(_DATE_WD_NAMES) + r")\b", re.I)
+_DATE_SEASON = re.compile(r"\blast (summer|fall|autumn|winter|spring)\b", re.I)
+_DATE_SEASON_MO = {"summer": 7, "fall": 10, "autumn": 10, "winter": 1, "spring": 4}
+_DT_ANY_A = re.compile(r"\b(\d{1,2})\s+([A-Za-z]{3,9})\.?,?\s*(\d{4})\b")       # 8 May, 2023
+_DT_ANY_B = re.compile(r"\b([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s*(\d{4})\b")  # May 3, 2023
+_DT_ANY_MO = {m[:3].lower(): i + 1 for i, m in enumerate(_DATE_MONTHS)}
+
+
+def _parse_dt_any(s: str) -> float | None:
+    """宽解析: 标准_parse_dt优先, 再兜底字母日期("1:56 pm on 8 May, 2023"/"May 3, 2023")。"""
+    ts = _parse_dt(s)
+    if ts is not None:
+        return ts
+    t = s or ""
+    for pat, day_first in ((_DT_ANY_A, True), (_DT_ANY_B, False)):
+        m = pat.search(t)
+        if not m:
+            continue
+        g = m.groups()
+        day, mon, year = (g[0], g[1], g[2]) if day_first else (g[1], g[0], g[2])
+        mi = _DT_ANY_MO.get((mon or "").lower()[:3])
+        if mi:
+            try:
+                return datetime(int(year), mi, int(day)).timestamp()
+            except ValueError:
+                continue
+    return None
+
+
+def _date_cn_num(s: str) -> int | None:
+    if s.isdigit():
+        return int(s)
+    if s == "十":
+        return 10
+    if s.startswith("十"):
+        return 10 + _DATE_CN_NUM.get(s[1:], 0)
+    if s.endswith("十"):
+        return _DATE_CN_NUM.get(s[:1], 0) * 10
+    return _DATE_CN_NUM.get(s)
+
+
+def date_anchor(text: str, dt: str) -> str:
+    """相对时间→绝对日期锚后缀(" [= Tuesday 18 July 2023]"; 多锚按日序≤4个·含星期名)。
+    无dt/无匹配/解析不出→""(零破坏fail-soft); BRAINOS_DATE_ANCHOR=0关门(缺省开)。"""
+    if not text or os.environ.get("BRAINOS_DATE_ANCHOR", "0") == "0":
+        return ""
+    base = _parse_dt_any(dt)
+    if base is None:
+        return ""
+    b = datetime.fromtimestamp(base)
+    days: set[int] = set()  # 相对b的偏移天数(负=未来)
+    for pat, d in _DATE_FIX:
+        if pat.search(text):
+            days.add(d)
+    for m in _DATE_AGO.finditer(text):
+        n = _DATE_NUM.get(m.group(1).lower())
+        if n is None and m.group(1).isdigit():
+            n = int(m.group(1))
+        if n:
+            days.add(n * _DATE_UNITS[m.group(2).lower()])
+    for m in _DATE_CN_AGO.finditer(text):
+        n = _date_cn_num(m.group(1))
+        if n:
+            days.add(n * _DATE_CN_UNIT[m.group(2)])
+    if re.search(r"\blast weekend\b|上周末", text, re.I):
+        days.add((b.weekday() + 1) % 7)   # 上个周日
+    if re.search(r"\bthis weekend\b", text, re.I):
+        days.add(-((5 - b.weekday()) % 7))  # 将来周六
+    for m in _DATE_WD.finditer(text):
+        mod, abbr, full = m.group(1), m.group(2), m.group(3)
+        tgt = _DATE_WD_IDX[(full or abbr).lower()[:3]]
+        wd = b.weekday()
+        mod = (mod or "").lower()
+        if mod in ("last", "past"):
+            days.add((wd - tgt) % 7 or 7)       # 上个X(严格之前)
+        elif mod in ("this", "next"):
+            days.add(-((tgt - wd) % 7))         # 将来的X
+        else:
+            days.add((wd - tgt) % 7)            # 裸全名=最近一次(≤当天)
+    for m in _DATE_SEASON.finditer(text):
+        days.add((b - datetime(b.year - 1, _DATE_SEASON_MO[m.group(1).lower()], 1)).days)
+    if not days:
+        return ""
+    parts = []
+    for d in sorted(days)[:4]:
+        t = b - timedelta(days=d)
+        parts.append(f"[= {_DATE_WD_NAMES[t.weekday()]} {t.day} {_DATE_MONTHS[t.month - 1]} {t.year}]")
+    return " " + " ".join(parts)
+
+
+# ─────────────── PR 代词解引 ───────────────
+_PRONOUN_RE = re.compile(r"\b(?:she|he|his|her|they)\b", re.I)
+
+
+def pronoun_expand(query: str, speakers) -> str:
+    """query含第三人称代词(独立词)→该会话说话人名全追加进查询尾(只扩查询不改卡)。
+    speakers=该conv说话人名可迭代(organ _spk_idx[conv]); 无名表/无代词→原样。
+    BRAINOS_PRONOUN_RESOLVE=0关门(缺省开)。"""
+    if not query or os.environ.get("BRAINOS_PRONOUN_RESOLVE", "1") == "0":
+        return query
+    if not speakers or not _PRONOUN_RE.search(query):
+        return query
+    names = sorted(s for s in speakers if s)
+    if not names:
+        return query
+    return query + " " + " ".join(names)
