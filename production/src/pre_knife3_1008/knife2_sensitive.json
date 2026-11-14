@@ -1,0 +1,100 @@
+{
+  "_comment": "knife2_sensitive.json — H2隐私闸敏感标注词典(零LLM·纯结构化·改此文件+重启即生效)。patterns为Python re(IGNORECASE编译)。categories: id_document=证件号 / finance_precise=精确财务数字 / health=健康状况与用药 / family_conflict=家庭矛盾 / address_full=门牌全址。宁缺勿错: 只收高置信模式, 未收录不标注(不拦=退回第1刀后现状, 保守安全)。release_intents: query显式问到该域→该类卡放行(E3健康关怀守护: 健康类必须照常返回)。",
+  "version": "knife2-privacy-20261008",
+  "categories": [
+    {
+      "key": "id_document",
+      "patterns": [
+        "\\b(?:ssn|social\\s+security\\s+(?:number|no|num))\\b(?:\\s*(?:is|:))?\\s*\\d[\\d\\- ]{5,14}\\d",
+        "\\b\\d{3}-\\d{2}-\\d{4}\\b",
+        "\\bpassport(?:\\s+(?:number|no|num))?\\s*(?:is|:)?\\s*[A-Z0-9]{6,9}\\b",
+        "\\bid(?:entification)?\\s+(?:number|no|num|card\\s+(?:number|no))\\s*(?:is|:)?\\s*\\d[\\d\\- ]{4,19}\\d",
+        "\\b\\d{17}[\\dXx]\\b",
+        "\\bdriver'?s?\\s+licen[cs]e(?:\\s+(?:number|no))?\\s*(?:is|:)?\\s*[A-Z0-9]{5,14}\\b",
+        "(?:身份证号?|证件号?|护照号?)(?:是|为|:：)?\\s*\\d[\\dXx\\- ]{5,18}\\d",
+        "银行卡号|信用卡号"
+      ]
+    },
+    {
+      "key": "finance_precise",
+      "patterns": [
+        "(?:\\bsalary|\\bincome\\b|\\bearn(?:s|ing|ings)?\\b|\\bmakes?\\s+(?:about|around|over|exactly)?|\\bwage[s]?\\s+(?:of|is)?|\\bannual\\s+pay\\b)[^.!?;。！？；\\n]{0,40}?(?:[$€£¥]\\s?\\d[\\d,]*(?:\\.\\d+)?|\\d[\\d,]{2,}\\s*(?:dollars?|euros?|pounds?|yuan|usd|gbp|eur|cny|rmb)\\b|\\d{2,3}\\s?k\\b)",
+        "\\bpaid\\s+(?:about|around|over|exactly)?\\s*(?:[$€£¥]\\s?\\d[\\d,]*(?:\\.\\d+)?|\\d[\\d,]{2,}\\s*(?:dollars?|euros?|pounds?|yuan|rmb)\\b)\\s*(?:per\\s+month|monthly|per\\s+year|annually|a\\s+year|a\\s+month|every\\s+month|every\\s+year)\\b",
+        "(?:[$€£¥]\\s?\\d[\\d,]*(?:\\.\\d+)?)\\s*(?:per\\s+month|monthly|per\\s+year|annually|a\\s+year|a\\s+month|each\\s+year|each\\s+month)?[^.!?;。！？；\\n]{0,20}?(?:\\bsalary\\b|\\bincome\\b|\\bworth\\b)",
+        "(?:月薪|年薪|工资|薪水|收入|挣了|赚了|月入|年入)[^.!?;。！？；\\n]{0,12}?(?:\\d[\\d,\\.]*\\s*(?:万|千|块|元|美元|人民币)?|\\d{2,3}k)",
+        "(?:\\d[\\d,]*(?:\\.\\d+)?)\\s*(?:万|千)\\s*(?:一个月|一年|每月|每年|月薪|年薪)"
+      ]
+    },
+    {
+      "key": "health",
+      "patterns": [
+        "\\bdiagnosed\\s+with\\b",
+        "\\bsuffers?(?:ing)?\\s+from\\b",
+        "\\bhas\\s+(?:been\\s+)?(?:diagnosed|battl?ing|suffering)\\b",
+        "\\b(?:has|have|had)\\s+(?:diabetes|cancer|hiv|aids|epilepsy|bipolar(?:\\s+disorder)?|schizophrenia|leukemia|lymphoma|a\\s+tumor|high\\s+blood\\s+pressure|hypertension|asthma|arthritis|alzheimer(?:'s)?|dementia|crohn(?:'s)?(?:\\s+disease)?|lupus|ms\\b|copd)\\b",
+        "\\btakes?\\s+(?:insulin|metformin|prozac|zoloft|lisinopril|metoprolol|atorvastatin|amlodipine|levothyroxine|warfarin|xanax|adderall|sertraline|fluoxetine|prednisone)\\b",
+        "\\b(?:undergoing|undergoes|received?|getting)\\s+(?:chemotherapy|chemo|radiation|dialysis|treatment|surgery)\\b",
+        "\\bprescribed\\b[^.!?;。！？；\\n]{0,30}\\b(?:pills?|medication|medicine|mg|antidepressants?|insulin)\\b",
+        "\\b(?:is|am|are)\\s+in\\s+(?:remission|recovery|therapy)\\b",
+        "\\bmental\\s+(?:health\\s+(?:issues?|struggles?|conditions?|breakdown)|breakdown|illness)\\b",
+        "确诊(?:了|患)?", "患有", "查出(?:了)?", "糖尿病", "高血压", "化疗", "放疗", "透析", "抑郁症", "抗癌", "肿瘤", "中(?:风|风了)", "长期服药", "处方药", "在看心理(?:医生|咨询)"
+      ]
+    },
+    {
+      "key": "family_conflict",
+      "patterns": [
+        "\\bdivorc(?:e|es|ed|ing)\\b",
+        "\\bhav(?:e|es|ing)\\s+an\\s+affair\\b",
+        "\\bcheat(?:s|ed|ing)\\s+on\\b",
+        "\\b(?:fight|fighting|argument|arguments|arguing|quarrel|quarreling|constant\\s+fight)\\w*\\s+with\\s+(?:my\\s+|his\\s+|her\\s+|their\\s+)?(?:wife|husband|spouse|partner|mom|mother|dad|father|son|daughter|family)\\b",
+        "\\bcustody\\s+(?:battle|dispute|fight|case)\\b",
+        "\\b(?:domestic\\s+(?:dispute|abuse|violence)|family\\s+(?:feud|conflict|dispute))\\b",
+        "\\b(?:not\\s+on\\s+speaking\\s+terms\\s+with|estranged\\s+from)\\s+(?:my\\s+|his\\s+|her\\s+|their\\s+)?(?:wife|husband|spouse|partner|mom|mother|dad|father|son|daughter|family|brother|sister)\\b",
+        "离婚", "出轨", "外遇", "家暴", "吵(?:架|翻)了", "和(?:妻子|丈夫|配偶|老婆|老公|家人)闹翻", "争夺抚养权"
+      ]
+    },
+    {
+      "key": "address_full",
+      "patterns": [
+        "\\b(?:lives?|living|stays?|resid(?:e|es|ing))\\s+(?:at|in)\\s+\\d{1,6}\\b[^.!?;。！？；\\n]{0,50}",
+        "\\b(?:address|street\\s+address)\\s+is\\s+\\d{1,6}\\b[^.!?;。！？；\\n]{0,50}",
+        "\\b\\d{1,6}\\s+[A-Z][\\w'’\\-]+\\s+(?:street|st\\.?|avenue|ave\\.?|road|rd\\.?|lane|ln\\.?|boulevard|blvd\\.?|drive|dr\\.?|court|ct\\.?|way|terrace|place|pl\\.?)\\b",
+        "\\b(?:apt|apartment|unit|suite|ste\\.?)\\s*#?\\s*\\d{1,6}[A-Z]?\\b",
+        "住在[^.!?;。！？；\\n]{0,8}\\d{1,6}\\s*(?:号|栋|幢|单元|室|楼)",
+        "(?:地址|住址)(?:是|为|:：)?[^.!?;。！？；\\n]{0,6}\\d{1,6}\\s*(?:号|栋|幢|单元|室)"
+      ]
+    }
+  ],
+  "release_intents": {
+    "health": [
+      "\\bhealth\\b", "\\bhealthy\\b", "\\bil(?:l|lness|lnesses)\\b", "\\bsick(?:ness)?\\b", "\\bdisease\\b",
+      "\\bdiagnos(?:is|ed|e[sd]?)\\b", "\\bdiabetes\\b", "\\bcancer\\b", "\\b(?:health|medical|mental)\\s+condition\\b",
+      "\\bmedic(?:ation|ations|ine|ines|al)\\b", "\\btreatment\\b", "\\btherapy\\b", "\\btherapist\\b",
+      "\\bsymptoms?\\b", "\\bdoctor\\b", "\\bphysician\\b", "\\bhospital\\b", "\\bclinic\\b",
+      "\\bwell[- ]?being\\b", "\\bwellness\\b", "\\bprescri(?:bed|ption)\\b", "\\binsulin\\b",
+      "\\bchemo\\b", "\\bremission\\b", "\\brecovering?\\b", "\\bsurgery\\b",
+      "健康", "生病", "疾病", "病(?:情|历|了)", "确诊", "糖尿病", "用药", "吃药", "服药", "治疗",
+      "症状", "医生", "医院", "化疗", "康复", "处方", "身体状况", "心理"
+    ],
+    "finance_precise": [
+      "\\bsalary\\b", "\\bincome\\b", "\\bearn(?:s|ing|ings)?\\b", "\\bwage\\b", "\\bpayroll\\b",
+      "\\bmoney\\b", "\\bfinanc(?:e|es|ial|ially)\\b", "\\bworth\\b",
+      "工资", "薪水", "收入", "月薪", "年薪", "挣", "赚", "财务", "多少钱"
+    ],
+    "family_conflict": [
+      "\\bfamily\\b", "\\bmarri(?:age|ed)\\b", "\\bdivorc\\w*\\b", "\\bspouse\\b", "\\bpartner\\b",
+      "\\bwife\\b", "\\bhusband\\b", "\\bmarriage\\b", "\\brelationship\\b", "\\bhome\\s+life\\b",
+      "\\bcustody\\b", "\\baffair\\b",
+      "家庭", "婚姻", "结婚", "离婚", "配偶", "妻子", "丈夫", "老婆", "老公", "感情", "家(?:里|庭)情况", "吵架"
+    ],
+    "id_document": [
+      "\\b(?:id\\s+(?:number|card|info)|identity|passport|social\\s+security|ssn|driver'?s?\\s+licen[cs]e)\\b",
+      "身份证", "护照", "证件", "驾照", "银行卡号", "信用卡号"
+    ],
+    "address_full": [
+      "\\baddress\\b", "\\baddress(?:es)?\\b", "\\bliv(?:e|es|ing)\\b", "\\bresiden(?:ce|t)\\b",
+      "\\bwhere\\s+(?:does|do|is|are|did)\\b", "\\bapartment\\b", "\\bstreet\\b",
+      "地址", "住址", "住哪", "住在哪", "家在哪", "住处", "门牌"
+    ]
+  }
+}
