@@ -1,0 +1,131 @@
+{
+ "_comment": "knife6_rules.json — S7刀词典(G2规则卡+G4经验卡/趋势卡·零LLM·可增量: 改本件+重启即生效)。三段: add侧卡生成信号 / query侧意图信号 / 数值度量抽取。query侧纪律=名词锚定(禁裸should/follow等高频词——对表全床50query零误触, 见knife6_selftest §零扰动门)",
+ "add_side": {
+  "rule_signals": [
+   "\\bno\\s+[\\w\\s]{1,30}?\\s+(?:near|at|in|on|by)\\b",
+   "\\b(?:must(?:n't| not)?|have to|has to|needs? to|required to)\\b",
+   "\\b(?:always|never)\\b",
+   "\\bever\\b",
+   "\\b(?:forbidden|not allowed|prohibited|off[- ]limits)\\b",
+   "\\brules?(?:\\s+(?:is|are|of|for|about|say|says|say:))\\b",
+   "\\brules?\\s*:\\s",
+   "\\brule\\s+(?:one|two|three|four|five|\\d+)\\b",
+   "\\b(?:remember|make sure|be sure) to\\b",
+   "\\b(?:every|each) time\\b",
+   "\\bwhenever\\b",
+   "\\bdon't\\b|\\bdo not\\b",
+   "\\bsupposed to\\b",
+   "以后都?|永远|每次都?|必须|一定要?|记得要?|不准|不许|禁止|不要|规则是|规定：|规定:"
+  ],
+  "exp_signals": [
+   "\\b(?:hard[- ]won\\s+)?lessons?\\b",
+   "\\b(?:learned|learnt|learn to|learned to)\\b",
+   "\\btips?\\b",
+   "\\badvice\\b",
+   "\\bturns out\\b",
+   "\\b(?:my|the|a) trick\\b",
+   "\\bfigured out\\b",
+   "\\b(?:from|my) experience\\b",
+   "\\b(?:pro tip|lesson learned)\\b",
+   "经验|教训|诀窍|心得|学到|学会|总结出"
+  ],
+  "subjects": {
+   "name_prefix": "^(?:from\\s+)?([A-Z][\\w'-]{1,20})\\s*:\\s",
+   "first_person": "^\\s*(?:I|we|my|our)\\b"
+  }
+ },
+ "query_side": {
+  "strong_timeline": [
+   "\\btimeline\\b",
+   "\\bchronolog\\w*\\b",
+   "\\bin order\\b",
+   "\\btrace\\b",
+   "\\blist every\\b",
+   "\\ball of the\\b|\\ball the\\b",
+   "\\bover the years\\b",
+   "\\bso far\\b",
+   "时间线|轨迹|顺序|路线|经历过|时间顺序"
+  ],
+  "rule_intent": [
+   "\\brules?\\b",
+   "\\bregulations?\\b",
+   "\\bpolic(?:y|ies)\\b",
+   "\\bguidelines?\\b",
+   "\\brequirements?\\b",
+   "\\b(?:allowed|permitted|forbidden)\\b",
+   "规则|规定|守则|条例|要求|规范|政策",
+   "\\bunits?\\b",
+   "\\bmetric\\b",
+   "\\bimperial\\b",
+   "\\bsettings?\\b",
+   "\\bconfiguration\\b",
+   "\\bconfigured\\b",
+   "\\bprefer\\w*",
+   "\\bhabits?\\b",
+   "单位|公制|英制|设置|惯例|规矩|偏好|习惯"
+  ],
+  "exp_intent": [
+   "\\blearn(?:ed|s|t)?\\b",
+   "\\blessons?\\b",
+   "\\btips?\\b",
+   "\\badvice\\b",
+   "\\bexperience\\b",
+   "\\binsights?\\b",
+   "\\btakeaways?\\b",
+   "\\bfigured out\\b",
+   "经验|教训|诀窍|心得|学到|学会"
+  ],
+  "agg_intent": [
+   "\\btrends?\\b",
+   "\\baverage\\b|\\bavg\\b|\\bmean\\b|\\bon average\\b",
+   "\\busually\\b|\\btypically\\b",
+   "\\brange\\b",
+   "\\bover time\\b",
+   "\\bhow (?:has|have)\\b",
+   "\\bprogress\\b",
+   "趋势|平均|通常|区间|变化|进步|规律"
+  ]
+ },
+ "metrics": [
+  {
+   "key": "weight",
+   "label": "weight",
+   "rx": "(\\d+(?:\\.\\d+)?)\\s*(?:kg\\b|kgs\\b|kilograms?\\b|公斤|千克)"
+  },
+  {
+   "key": "run_distance",
+   "label": "run distance",
+   "rx": "(\\d+(?:\\.\\d+)?)\\s*(?:km\\b|kilometers?\\b|公里)"
+  },
+  {
+   "key": "sleep_hours",
+   "label": "sleep",
+   "rx": "(?:sleep(?:ing)?|slept|睡眠)[^.;!?]{0,24}?(\\d+(?:\\.\\d+)?)\\s*(?:hours?|hrs?|h\\b|小时)|(\\d+(?:\\.\\d+)?)\\s*(?:hours?|hrs?|小时)\\s*(?:of\\s+)?(?:sleep|睡眠)"
+  },
+  {
+   "key": "spend",
+   "label": "spending",
+   "rx": "(?:spent|paid|costs?|charged|billed|花费|花了|用了)\\s*(?:about\\s*|around\\s*|~)?[$€¥]?\\s*(\\d+(?:\\.\\d+)?)\\s*(?:dollars?|usd|euros?|yuan|元|块| bucks)?\\b"
+  },
+  {
+   "key": "rating",
+   "label": "rating",
+   "rx": "\\b(\\d+(?:\\.\\d+)?)\\s*(?:/\\s*10|out of 10|stars?|星)"
+  },
+  {
+   "key": "duration_booking",
+   "label": "booking lead time",
+   "rx": "(\\d+(?:\\.\\d+)?)\\s*(?:months?|weeks?|days?|个月|周|天)\\s*(?:ahead|in advance|early|earlier|提前)"
+  }
+ ],
+ "limits": {
+  "max_pin_per_kind": 4,
+  "max_pin_total": 6,
+  "trend_min_points": 3
+ },
+ "trend_words": {
+  "rising": "rising",
+  "falling": "falling",
+  "stable": "stable"
+ }
+}

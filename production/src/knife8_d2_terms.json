@@ -1,0 +1,22 @@
+{
+  "_comment": "knife8_d2_terms.json — wave2·k8_d2矛盾显影刀·比较类query意图词典(20261009)。法典: ①与k1(history_signals/current_markers/pred patterns)/k3(query_signals)/k5(yield_history_agg/yield_time/trip)/k7(aggregate_signals)零交集——selftest S1全词表比对守门; ②零命中=字节直通(清单加项即死·新词先过红蓝护栏); ③来源=SPEC_wave2.md §3.2.1词典+compare族补缺(SPEC自身验收题D2-04 'How does her city compare to before?'需compare命中·SPEC词典缺该词·补\\bcompar(...)\\b·零交集实证见selftest); ④'换成了'按SPEC原词会与k1 add侧uses谓词pattern零交集冲突(实证knife1_predicates.json)→收窄为复合形态'换成了.{0,24}(现在|如今|目前)'——query级真实比较表述才触发, add侧抽取域零扰动。",
+  "version": "knife8-d2-20261009",
+  "compare_signals_en": [
+    "\\bvs\\.?\\b",
+    "\\bversus\\b",
+    "\\bdiffer\\w*\\b",
+    "\\bchange[ds]?\\b",
+    "\\bswitch(ed)?\\b",
+    "\\bcompar(?:e|es|ed|ing|ison|isons)\\b",
+    "\\bhow\\s+has\\s+\\b.+?\\bbecome\\b"
+  ],
+  "compare_signals_zh": [
+    "变化",
+    "改成",
+    "换成了.{0,24}(现在|如今|目前)",
+    "和现在比",
+    "跟现在比",
+    "以前.{0,32}(现在|如今|目前)",
+    "(现在|如今|目前).{0,32}以前"
+  ]
+}

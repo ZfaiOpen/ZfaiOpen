@@ -1,0 +1,145 @@
+{
+  "_comment": "knife1_predicates.json — D1双时相新值覆盖/D2矛盾检测·维护词典(零LLM·纯结构化·改此文件+重启即生效)。patterns为Python re(IGNORECASE编译, 大小写不敏感); 命名组(?P<v>...)=值捕获(缺省=匹配尾后全文); class: supersede=当前态事实(新值覆盖旧值·旧卡排除) / preference=偏好(值不同=conflict对·双卡共存)。subject: 句首到谓语间取尾端专名/代词(我→@speaker·三人称代词跳过)。",
+  "version": "knife1-d1d2-20261008",
+  "predicates": [
+    {
+      "key": "live_in",
+      "class": "supersede",
+      "patterns": [
+        "\\bmoved?\\s+from\\s+[\\w'’\\-\\s]{2,40}?\\s+to\\b",
+        "\\bmoved?\\s+to\\b",
+        "\\b(?:lives?|lived|living)\\s+(?:in|at|near)\\b",
+        "\\b(?:resides?|resided|residing|dwells?|dwelt|stays?|stayed|staying)\\s+(?:in|at|near)\\b",
+        "\\brelocated?\\s+(?:to|from)\\b",
+        "\\bsettled?\\s+(?:down\\s+)?in\\b",
+        "\\bbased\\s+(?:out\\s+of|in)\\b",
+        "\\b(?:am|is|are)\\s+(?:now\\s+)?in\\b",
+        "居住在", "定居在", "定居于", "落户在", "落户于", "搬到", "搬到了", "搬去", "迁到", "迁往", "移居", "住在", "居于", "如今在", "现在在"
+      ]
+    },
+    {
+      "key": "work_at",
+      "class": "supersede",
+      "patterns": [
+        "\\bworks?\\s+(?:at|for|in|with)\\b",
+        "\\bworking\\s+(?:at|for|with)\\b",
+        "\\bworked\\s+(?:at|for|in|with)\\b",
+        "\\bjoined\\b",
+        "\\bhired?\\s+(?:at|by)\\b",
+        "\\bstarted?\\s+(?:at|with)\\b",
+        "\\bnew\\s+job\\s+(?:at|with)\\b",
+        "任职于", "就职于", "入职了", "入职", "加入了", "跳槽到", "跳槽去了", "在(?P<v>[\\u4e00-\\u9fa5A-Za-z0-9]{2,24})工作", "在(?P<v>[\\u4e00-\\u9fa5A-Za-z0-9]{2,24})上班"
+      ]
+    },
+    {
+      "key": "spouse",
+      "class": "supersede",
+      "patterns": [
+        "\\bmarried?\\s+to\\b",
+        "\\bgot\\s+married\\b",
+        "\\bmarried\\b",
+        "\\bengaged\\s+to\\b",
+        "\\b(?:is|am|are)\\s+dating\\b",
+        "\\bdating\\b",
+        "\\bin\\s+a\\s+relationship\\s+with\\b",
+        "\\b(?:wife|husband|girlfriend|boyfriend|fianc[eé]e?|partner)\\s+is\\b",
+        "\\bdivorc(?:ed|ing)\\b",
+        "\\bbroke\\s+up\\b",
+        "\\bsplit\\s+up\\b",
+        "\\bsingle\\s+again\\b",
+        "结婚了", "嫁给了", "娶了", "离婚了", "分手了", "在和(?P<v>[\\u4e00-\\u9fa5A-Za-z·]{2,12})交往", "对象是", "男朋友是", "女朋友是", "丈夫是", "妻子是", "老婆是", "老公是"
+      ]
+    },
+    {
+      "key": "owns",
+      "class": "supersede",
+      "patterns": [
+        "\\bbought\\b",
+        "\\bpurchased\\b",
+        "\\bsold\\b",
+        "\\bgot\\s+(?:a|an)\\s+new\\b",
+        "\\bupgraded?\\s+(?:to|my)\\b",
+        "\\btraded\\s+in\\b",
+        "买了", "购买了", "购入了", "卖掉了", "换新了", "入手了", "置换了"
+      ]
+    },
+    {
+      "key": "uses",
+      "class": "supersede",
+      "patterns": [
+        "\\buses\\b",
+        "\\busing\\b",
+        "\\buse\\b",
+        "\\bdrives?\\b",
+        "\\bdriving\\b",
+        "\\brides?\\b",
+        "\\bswitched?\\s+to\\b",
+        "用的是", "在用", "开着", "骑的是", "换成了"
+      ]
+    },
+    {
+      "key": "school_at",
+      "class": "supersede",
+      "patterns": [
+        "\\bstudies\\s+at\\b",
+        "\\bstudying\\s+at\\b",
+        "\\bstudied\\s+at\\b",
+        "\\bgoes\\s+to\\s+(?:school|college|university)\\b",
+        "\\btransf(?:er)?red\\s+to\\b",
+        "\\b(en)?rolled\\s+at\\b",
+        "就读于", "转学到", "考上了", "在读于"
+      ]
+    },
+    {
+      "key": "likes",
+      "class": "preference",
+      "patterns": [
+        "(?<!不)(?<!不 )\\blikes?\\b",
+        "\\bloves?\\b",
+        "\\benjoys?\\b",
+        "(?<!不)喜欢", "最爱", "偏爱", "钟爱"
+      ]
+    },
+    {
+      "key": "hates",
+      "class": "preference",
+      "patterns": [
+        "\\bhates?\\b",
+        "\\bdislikes?\\b",
+        "\\bcan'?t\\s+stand\\b",
+        "讨厌", "不喜欢", "受不了"
+      ]
+    },
+    {
+      "key": "favorite",
+      "class": "preference",
+      "patterns": [
+        "\\bfavou?rite\\s+\\w+\\s+is\\b",
+        "\\bfavou?rite\\b",
+        "最喜欢的是", "最喜欢的\\S{1,6}是", "最爱的是"
+      ]
+    }
+  ],
+  "history_signals": [
+    "\\bused\\s+to\\b",
+    "\\b(?:has|have|had)\\b[^.!?;。！？；\\n]{0,40}?\\b\\w+(?:ed|en)\\b",
+    "\\bdid\\b",
+    "\\bever\\b",
+    "\\bhistory\\b",
+    "\\btimeline\\b",
+    "\\bchronolog\\w*\\b",
+    "\\bover\\s+the\\s+years\\b",
+    "\\bin\\s+the\\s+past\\b",
+    "\\ball\\s+(?:of\\s+the|the)\\s+(?:places|cities|countries|jobs|companies|schools|addresses)\\b",
+    "\\bso\\s+far\\b",
+    "住过", "待过", "去过", "工作过", "用过", "买过", "开过", "玩过", "学过", "生活过", "交往过", "呆过",
+    "曾经", "以前", "之前", "历史", "时间线", "轨迹", "经历",
+    "哪些城市", "哪些地方", "哪些公司", "哪些学校", "过哪些", "都住过", "都工作过"
+  ],
+  "current_markers": [
+    "\\bnow\\b", "\\bcurrently\\b", "\\bthese\\s+days\\b", "\\bat\\s+the\\s+moment\\b",
+    "\\bright\\s+now\\b", "\\btoday\\b", "\\bnowadays\\b", "\\bwhere\\s+(?:does|do|is|are)\\b",
+    "\\bwho\\s+is\\b", "\\bis\\s+dating\\b", "\\bwhat\\s+does\\b",
+    "现在", "如今", "目前", "眼下", "最近", "住哪", "住在哪", "在哪", "用哪个", "谁是"
+  ]
+}

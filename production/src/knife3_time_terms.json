@@ -1,0 +1,42 @@
+{
+  "_comment": "knife3_time_terms.json — C1时间锚定词典(零LLM·纯结构化·改此文件+重启即生效)。months_en/weekdays_en=英文日历词表; numerals=中英数词(相对表达量词); query_signals=SEARCH相时间query检测信号(正则·IGNORECASE); bounds=防毒闸(锚须落在[base-past_days, base+future_days]内·出界弃锚·fail-soft)。granularity_units: 问粒度对表用(问天给天数/问月给月数)。",
+  "version": "knife3-time-20261008",
+  "months_en": {
+    "january": 1, "jan": 1, "february": 2, "feb": 2, "march": 3, "mar": 3,
+    "april": 4, "apr": 4, "may": 5, "june": 6, "jun": 6, "july": 7, "jul": 7,
+    "august": 8, "aug": 8, "september": 9, "sep": 9, "sept": 9,
+    "october": 10, "oct": 10, "november": 11, "nov": 11, "december": 12, "dec": 12
+  },
+  "weekdays_en": {
+    "monday": 0, "mon": 0, "tuesday": 1, "tue": 1, "tues": 1, "wednesday": 2, "wed": 2,
+    "thursday": 3, "thu": 3, "thurs": 3, "friday": 4, "fri": 4, "saturday": 5, "sat": 5,
+    "sunday": 6, "sun": 6
+  },
+  "numerals_en": {
+    "a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+    "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+    "a couple of": 2, "couple of": 2, "a few": 3, "several": 3
+  },
+  "numerals_cn": {
+    "一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10
+  },
+  "weekday_cn": { "一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5, "日": 6, "天": 6 },
+  "query_signals": {
+    "duration": [
+      "how\\s+long", "how\\s+much\\s+time", "how\\s+many\\s+(?:days?|weeks?|months?|years?)",
+      "\\bbetween\\b", "time\\s+between", "多久", "多长", "多少(?:天|周|个?月|年)", "间隔", "持续", "历时"
+    ],
+    "when": [
+      "\\bwhen\\b", "what\\s+date", "which\\s+day", "what\\s+day", "what\\s+year",
+      "\\bon\\s+what\\s+date\\b", "\\bwhat\\s+dates?\\b", "什么时候", "哪一天?", "哪年", "几号", "日期",
+      "\\bbefore\\b", "\\bafter\\b", "之前", "之后"
+    ],
+    "order": [
+      "in\\s+order", "\\border\\b", "sequence", "timeline", "trajectory", "\\broute\\b", "\\brank(?:ed|ing)?\\b",
+      "顺序", "先后", "轨迹", "路线", "时间线"
+    ],
+    "granularity_months": ["how\\s+many\\s+months", "几个月", "多少个?月"],
+    "granularity_years": ["how\\s+many\\s+years", "几年", "多少年"]
+  },
+  "bounds": { "past_days": 1827, "future_days": 366 }
+}

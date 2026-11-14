@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "_comment": "knife5 S3多跳扩查刀·关系链词典(零LLM·可增量: 加词+重启生效,knife1同款约定)。trip=二跳触发词(命中才允许二跳); yield_history_agg=真历史/聚合让位标记(命中→S3整体让位,k1时间线/C3/B1聚合资产禁打架); yield_time=时序域让位(C1/C2归k3); stop=扩查词停用表。",
+  "trip": {
+    "en": ["why", "because", "cause", "caused", "reason", "due to", "lead to", "led to",
+           "brother", "sister", "cousin", "uncle", "aunt", "nephew", "niece",
+           "husband", "wife", "son ", "daughter", "grandfather", "grandmother",
+           "boss", "manager", "hometown", "where", "moved", "moving", "relocated",
+           "later on", "after that", "then "],
+    "zh": ["为什么", "为何", "原因", "因为", "导致", "所以", "因此", "根源", "起因",
+           "的哥哥", "的弟弟", "的姐姐", "的妹妹", "堂哥", "堂弟", "表哥", "表弟",
+           "的丈夫", "的妻子", "老婆", "老公", "的儿子", "的女儿", "的父亲", "的母亲",
+           "的老板", "的上司", "住在", "居住", "所在城市", "在哪里", "哪里", "哪儿",
+           "搬家", "搬到", "后来", "接着"]
+  },
+  "yield_history_agg": {
+    "en": ["list ", "every ", "all of the", "all the", "trace", "timeline", "chronolog",
+           "over the years", "so far", "in order", "in what order", "history of"],
+    "zh": ["列举", "所有", "全部", "哪些城市", "哪些地方", "哪些公司", "哪些学校",
+           "时间线", "轨迹", "经历", "顺序", "先后", "都住过", "都工作过", "历史"]
+  },
+  "yield_time": {
+    "en": ["how long", "how many months", "how many days", "how many years",
+           "between ", "before ", "duration"],
+    "zh": ["多久", "多少天", "多少个月", "多少年", "间隔", "之间"]
+  },
+  "stop": {
+    "en": ["the", "and", "that", "with", "this", "for", "was", "were", "are", "have", "has",
+           "had", "did", "does", "his", "her", "their", "its", "not", "but", "from", "into",
+           "out", "about", "after", "before", "over", "under", "then", "than", "when", "what",
+           "which", "who", "whom", "why", "how", "where", "she", "him", "they", "them",
+           "will", "would", "could", "should", "just", "very", "really", "also", "too",
+           "new", "one", "two", "three", "get", "got", "put", "set", "let"],
+    "zh": ["的", "了", "是", "在", "他", "她", "它", "们", "这", "那", "什么", "怎么", "哪里",
+           "为什么", "如何", "以及", "还有", "但是", "然后", "所以", "因为"]
+  }
+}

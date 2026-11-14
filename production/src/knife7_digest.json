@@ -1,0 +1,42 @@
+{
+ "_comment": "knife7_digest.json — S4抽取式层次摘要刀·聚合意图白名单词典(进结果门·20261009)。法典铁律: 仅本清单命中的query放行digest卡入结果; 清单加项即死(加项=事实query掺digest风险, 新词必须先过红蓝护栏实测再由指挥官批)。中文=子串匹配; 英文=\\b词边界+空格兼容\\s+。审计基线: 校准床50题query零误命中(B3-01'all cities'不含'all time'不触发·D3-02'What was decided'不触发·stream_smoke全查不触发)。",
+ "version": "knife7-digest-20261009",
+ "aggregate_signals_zh": [
+  "所有",
+  "全部",
+  "总结",
+  "概括",
+  "一共",
+  "总共",
+  "长期",
+  "整体",
+  "综合",
+  "汇总",
+  "归纳",
+  "这段时间"
+ ],
+ "aggregate_signals_en": [
+  "summarize",
+  "summary",
+  "recap",
+  "overall",
+  "in total",
+  "altogether",
+  "all time",
+  "everything",
+  "long-term",
+  "big picture",
+  "across",
+  "pattern",
+  "in general",
+  "over time",
+  "so far",
+  "taken\\s+together",
+  "most\\s+strongly\\s+suggest",
+  "whole\\s+story",
+  "describe\\s+the\\s+overall",
+  "give\\s+an\\s+overview",
+  "life\\s+story",
+  "what\\s+happened"
+ ]
+}
