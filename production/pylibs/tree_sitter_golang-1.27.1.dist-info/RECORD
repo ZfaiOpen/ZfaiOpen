@@ -1,0 +1,16 @@
+tree_sitter_golang-1.27.1.dist-info/INSTALLER,sha256=zuuue4knoyJ-UwPPXg8fezS7VCrXJQrAP7zeNuwvFQg,4
+tree_sitter_golang-1.27.1.dist-info/METADATA,sha256=_WS5E3OtKmEN6YoSNKJAzopGkC4vsrptWJ6S5Nn6UqI,3070
+tree_sitter_golang-1.27.1.dist-info/RECORD,,
+tree_sitter_golang-1.27.1.dist-info/REQUESTED,sha256=47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU,0
+tree_sitter_golang-1.27.1.dist-info/WHEEL,sha256=UEHNl1guiweLD2UHWQEOooQ-Af8UQBVMbhXt9HpMbRw,183
+tree_sitter_golang-1.27.1.dist-info/licenses/LICENSE,sha256=BGaHvvmIO_gnZQupD3PwykA5d89kL7UPbSS5X8p-7us,1087
+tree_sitter_golang-1.27.1.dist-info/top_level.txt,sha256=HhWQjQwBKYJaVhnORNISoNPiTsRCjxY25DmJgjmzZ70,28
+tree_sitter_golang/__init__.py,sha256=POhsxcrbrFpJcR9GSNLlVUoOGZG70VRg0GAHsNKWnHY,1239
+tree_sitter_golang/__init__.pyi,sha256=_OssCCidA1KWyM6d9j343y5AzSvPctfZ9gE5TOf_V3w,504
+tree_sitter_golang/__pycache__/__init__.cpython-312.pyc,,
+tree_sitter_golang/_binding.abi3.so,sha256=ydt2JNGPHyzeDRbXlOA8FicJhN7tPJ91lttlPDEJ1dc,917112
+tree_sitter_golang/binding.c,sha256=TnpMZJFH3q4ci30_PkVLc3FuTl9AJy3LsJOTFOysL10,836
+tree_sitter_golang/py.typed,sha256=47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU,0
+tree_sitter_golang/queries/highlights.scm,sha256=2VtBZAeZf32OxskRP4GlEemu5D21BnQEbk-RXxqVzSs,3018
+tree_sitter_golang/queries/injections.scm,sha256=oaT_W4pJkxtol_cfTnVd2raso45xmBYH9NuL9q6lWkQ,531
+tree_sitter_golang/queries/tags.scm,sha256=8pCxTUFd-FC65SsCFSy2KtloLToQ8iaEJBhDQEDjRp8,2735

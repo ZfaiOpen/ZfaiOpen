@@ -175,7 +175,7 @@ Agent 元架构（agent_loop/AMCC/autonomous/ANS）、战役级调度调优层�
 
 ### 与商业版的关系
 
-本仓库是 **Zfai Open** 开源基线（v0.9）。商业版在其之上叠加：Agent 元架构、
+本仓库为 **Zfai Open** 开源全量版（v0.10.0-aml，AML第二期代码赛道·开源方法榜参赛版本，tag v0.10.0-aml / commit b2250b3a，任务 teval_e566217ef1617a43）。原v0.9声明未开放的调度与调优模块（Agent元架构调度层、战斗调优层等）自本版本起**全量公开于 production/src/（95模块）**，逐模块评测用途见 MODULE_MAP.md，披露声明见 FULL_DISCLOSURE_NOTICE.md。
 战役级调优层、多租户与计费、企业治理与评测体系。开源版与商业版共享 memory
 内核架构，商业版并非本仓库的简单超集，两者能力边界见 `CARVE_NOTICE.md`。
 

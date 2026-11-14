@@ -37,8 +37,8 @@ tag v0.10.0-aml(commit b2250b3a)全量公开于 production/src/(73 模块)。逐
 | brainos/api/ | AML wire 契约 + 多通道召回基线(BM25+char-trigram+recency·RRF) |
 | brainos/kernel/ | 安全执行/异步兼容/重试熔断/协议接口 |
 | brainos/observability/ | auto_log |
-| models/ | all-MiniLM-L6-v2 权重(随包;启动被 v4shim 替换为 v4——运行期未使用,如实申报) |
-| pylibs/ | tree-sitter(python/go/java/javascript)供应依赖 |
+| | models/（配置骨架已入仓 production/models/） | all-MiniLM-L6-v2 配置/词表骨架；运行期嵌入被 v4shim 替换为 text-embedding-v4(DashScope API)——本地权重未参与运行,如实申报 | |
+| pylibs/（已入仓 production/pylibs/） | tree-sitter(python/go/java/javascript)供应依赖·U7 AST启用前提 |
 
 ## 四、外部服务依赖(依赖清单之运行时部分·密钥自备不入库)
 
@@ -49,3 +49,7 @@ tag v0.10.0-aml(commit b2250b3a)全量公开于 production/src/(73 模块)。逐
 | qwen3-0.6b 重排服务(127.0.0.1:8098) | 检索重排 | BRAINOS_RERANK_URL |
 
 以上与 2026-10-20 报备邮件登记的 v0.10.0-aml 变更逐项对应;本次正式评测全程使用同一登记实现。
+
+## 四、开发期补丁与自测脚本（已一并入仓·非运行时路径）
+
+src/ 内 patch_*.py（18件·一次性迁移补丁工具）与 test_*.py（3件·本地自测）为开发期工具，正式评测运行时路径不加载（运行时引用核验=零import）；一并入仓以保源码完整可核验。
