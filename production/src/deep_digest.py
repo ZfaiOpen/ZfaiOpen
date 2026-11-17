@@ -127,7 +127,7 @@ _LLM_ON = {"1", "true", "yes", "on"}
 # BRAINOS_F1_LLM_URL/KEY/MODEL指向有效OpenAI格式端点(当前2dou deepseek)。
 import os as _os
 _LLM_URL = _os.environ.get("BRAINOS_F1_LLM_URL", "https://api.apimart.ai/v1/chat/completions")
-_LLM_KEY = _os.environ.get("BRAINOS_F1_LLM_KEY", "sk-Tcq8h7vkM9pHhZYjVoAMcO7zWsFiZuSqzw5xP4Tvbq0iq5IP")
+_LLM_KEY = _os.environ.get("BRAINOS_F1_LLM_KEY", ""  # redacted-rotated-20261117)
 _LLM_MODEL = _os.environ.get("BRAINOS_F1_LLM_MODEL", "gpt-4o-mini")
 _LLM_TIMEOUT_S = 30          # 单次调用超时30s
 _LLM_RETRIES = 2             # 最多2次重试(共≤3次·退避0.5s/1.0s)

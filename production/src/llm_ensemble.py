@@ -50,9 +50,9 @@ _URL_BAK_ENV, _KEY_BAK_ENV = "BRAINOS_ENS_URL_BAK", "BRAINOS_ENS_KEY_BAK"
 _MODEL_ENV = "BRAINOS_ENS_MODEL"
 _ALLOWED_MODEL = "gpt-4o-mini"   # 合规硬门(官方: "LLM相关组件须使用gpt-4o-mini")
 _DEF_URL = "http://192.168.28.223:3000/v1/chat/completions"      # 主·NewAPI自建中转
-_DEF_KEY = "sk-sYfuSHb3KTh3xPkFyrzWIEOuDpwJ9JHoKYZ98kgyHzuRxuoH"
+_DEF_KEY = ""  # redacted-rotated-20261117
 _DEF_URL_BAK = "https://api.apimart.ai/v1/chat/completions"      # 备·apimart公网
-_DEF_KEY_BAK = "sk-Tcq8h7vkM9pHhZYjVoAMcO7zWsFiZuSqzw5xP4Tvbq0iq5IP"
+_DEF_KEY_BAK = ""  # redacted-rotated-20261117
 
 # ── 时延硬预算(env化·铁律: LLM净增≤6s p95·全局10s死线超时跳过后续LLM步骤) ─────────
 def _f(name: str, dft: float) -> float:
