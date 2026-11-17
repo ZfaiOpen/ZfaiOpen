@@ -75,3 +75,8 @@ exec /www/braios_coding/venv/bin/python aml_service.py
 - 8090: aml_service.py 主服务(127.0.0.1·健康端点/health)
 - LLM/Embedding: env文件注入(合规接口)
 - 模型: models/本地MiniLM+qwen3-0.6b
+
+## 路径适配与依赖补充说明(20261117)
+- 本脚本原为VPS在役形态(绝对路径/www/braios_coding/)——克隆复现时把production/树铺到你的ROOT目录·或自行改路径
+- PYTHONPATH三件: pylibs(tree-sitter运行时·pip install tree-sitter等价)/brainos_frozen(已在库production/brainos_frozen)/models(MiniLM快照·huggingface下载或仓库production/models)
+- env: 复制env.example为env并填入你自己的key(原内置key已rotate·历史提交中旧key勿用)
